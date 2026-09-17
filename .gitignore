@@ -1,0 +1,46 @@
+# Visual Studio, Rider e VS Code
+.vs/
+.idea/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# .NET
+**/bin/
+**/obj/
+**/.aspnet/
+TestResults/
+coverage/
+*.coverage
+
+# Node / Vite
+**/node_modules/
+**/dist/
+**/*.tsbuildinfo
+LojinhaCorsa.UI/vite.config.js
+LojinhaCorsa.UI/vite.config.d.ts
+
+# Variáveis locais e segredos
+.env
+.env.*
+!**/.env.example
+**/appsettings.Development.json
+**/appsettings.Production.json
+**/appsettings.*.local.json
+*.pfx
+*.p12
+*.pem
+*.key
+
+# Arquivos enviados durante o uso do sistema
+LojinhaCorsa.API/uploads/
+
+# Logs, temporários e arquivos do sistema
+*.log
+logs/
+tmp/
+.DS_Store
+Thumbs.db
+desktop.ini

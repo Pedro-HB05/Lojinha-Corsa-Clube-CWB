@@ -1,0 +1,17 @@
+.git/
+.gitignore
+.vs/
+.vscode/
+.aspnet/
+bin/
+obj/
+uploads/
+*.user
+*.suo
+*.http
+*.log
+.env
+.env.*
+appsettings.Development.json
+Dockerfile
+.dockerignore
