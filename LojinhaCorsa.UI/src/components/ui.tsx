@@ -1,5 +1,5 @@
 import { AlertTriangle, ChevronLeft, ChevronRight, Inbox, LoaderCircle, Moon, PackageOpen, Sun, X } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useTheme } from '../contexts/ThemeContext'
 import { assetUrl } from '../services/api'
 import { labelStatus, statusTone } from '../utils/format'
@@ -42,7 +42,23 @@ export function Pagination({ page, totalPages, onChange }: { page: number; total
 }
 
 export function ProductImage({ photoId, alt, className = '' }: { photoId?: string; alt: string; className?: string }) {
-  return photoId ? <img className={className} src={assetUrl(`/product-photos/${photoId}`)} alt={alt} /> : <div className={`image-placeholder ${className}`}><PackageOpen /><span>Sem foto</span></div>
+  const [hasError, setHasError] = useState(false)
+  if (!photoId || hasError) {
+    return (
+      <div className={`image-placeholder ${className}`}>
+        <PackageOpen />
+        <span>Sem foto</span>
+      </div>
+    )
+  }
+  return (
+    <img
+      className={className}
+      src={assetUrl(`/product-photos/${photoId}`)}
+      alt={alt}
+      onError={() => setHasError(true)}
+    />
+  )
 }
 
 export function Field({ label, error, children }: { label: string; error?: string; children: ReactNode }) {

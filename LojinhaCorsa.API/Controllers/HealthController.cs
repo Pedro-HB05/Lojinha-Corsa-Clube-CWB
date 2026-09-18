@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace LojinhaCorsa.API.Controllers;
 
-[ApiController, Route("api/health")]
+[ApiController, Route("api/health"), Route("health"), Route("")]
 public sealed class HealthController(AppDbContext db, IWebHostEnvironment environment) : ControllerBase
 {
     [AllowAnonymous, HttpGet]

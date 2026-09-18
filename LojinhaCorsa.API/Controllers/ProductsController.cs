@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace LojinhaCorsa.API.Controllers;
 
-[ApiController, Route("api")]
+[ApiController, Route("api"), Route("")]
 public sealed class ProductsController(AppDbContext db, ICurrentUser currentUser,
     IAuditService audit, IFileStorage files) : ControllerBase
 {
@@ -75,6 +75,9 @@ public sealed class ProductsController(AppDbContext db, ICurrentUser currentUser
     [Authorize(Roles = Roles.Administrator), HttpPost("admin/products")]
     public async Task<IActionResult> CreateProduct(ProductRequest request, CancellationToken ct)
     {
+        if (request.BasePrice <= 0)
+            throw new AppException(400, "O preço base do produto deve ser maior que zero.");
+
         await EnsureCategory(request.CategoryId, ct);
         var now = DateTimeOffset.UtcNow;
         var product = new Product { Id = Guid.NewGuid(), CategoryId = request.CategoryId,
@@ -86,9 +89,64 @@ public sealed class ProductsController(AppDbContext db, ICurrentUser currentUser
         return CreatedAtAction(nameof(GetProduct), new { id = product.Id }, new { product.Id });
     }
 
+    [Authorize(Roles = Roles.Administrator), HttpDelete("admin/products/{id:guid}")]
+    public async Task<IActionResult> DeleteProduct(Guid id, CancellationToken ct)
+    {
+        var product = await db.Products
+            .Include(x => x.Photos)
+            .Include(x => x.QuantityDiscounts)
+            .Include(x => x.AttributeDefinitions).ThenInclude(a => a.Values)
+            .Include(x => x.Variations).ThenInclude(v => v.AttributeValues)
+            .SingleOrDefaultAsync(x => x.Id == id, ct)
+            ?? throw new AppException(404, "Produto não encontrado.");
+
+        var hasOrders = await db.OrderItems.AnyAsync(x => x.ProductId == id, ct);
+        var hasBatches = await db.Batches.AnyAsync(x => x.ProductId == id, ct);
+
+        if (hasOrders || hasBatches)
+        {
+            throw new AppException(400, "Este produto possui pedidos ou lotes de produção vinculados e não pode ser excluído permanentemente. Você pode desativar a disponibilidade do produto para que ele não apareça na loja.");
+        }
+
+        foreach (var photo in product.Photos)
+        {
+            try
+            {
+                var path = files.GetAbsolutePath(photo.StorageKey);
+                if (System.IO.File.Exists(path))
+                    System.IO.File.Delete(path);
+            }
+            catch
+            {
+                // Ignora erro no sistema de arquivos para não travar a exclusão no banco
+            }
+        }
+
+        db.ProductPhotos.RemoveRange(product.Photos);
+        db.ProductQuantityDiscounts.RemoveRange(product.QuantityDiscounts);
+        foreach (var variation in product.Variations)
+        {
+            db.VariationAttributeValues.RemoveRange(variation.AttributeValues);
+        }
+        db.ProductVariations.RemoveRange(product.Variations);
+        foreach (var attr in product.AttributeDefinitions)
+        {
+            db.ProductAttributeValues.RemoveRange(attr.Values);
+        }
+        db.ProductAttributeDefinitions.RemoveRange(product.AttributeDefinitions);
+        db.Products.Remove(product);
+
+        audit.Add("Product", id, "ProductDeleted", details: new { product.Name, product.Slug });
+        await db.SaveChangesAsync(ct);
+        return NoContent();
+    }
+
     [Authorize(Roles = Roles.Administrator), HttpPut("admin/products/{id:guid}")]
     public async Task<IActionResult> UpdateProduct(Guid id, ProductRequest request, CancellationToken ct)
     {
+        if (request.BasePrice <= 0)
+            throw new AppException(400, "O preço base do produto deve ser maior que zero.");
+
         await EnsureCategory(request.CategoryId, ct);
         var product = await db.Products.FindAsync([id], ct) ?? throw new AppException(404, "Produto não encontrado.");
         product.CategoryId = request.CategoryId; product.Name = request.Name.Trim();
@@ -219,9 +277,14 @@ public sealed class ProductsController(AppDbContext db, ICurrentUser currentUser
 
     [Authorize(Roles = Roles.Administrator), HttpPost("admin/products/{productId:guid}/photos")]
     [RequestSizeLimit(5_242_880)]
-    public async Task<IActionResult> UploadPhoto(Guid productId, IFormFile file, [FromForm] string? altText,
+    public async Task<IActionResult> UploadPhoto(Guid productId, IFormFile? file, [FromForm] string? altText,
         [FromForm] bool isPrimary, CancellationToken ct)
     {
+        if (file is null || file.Length == 0)
+            throw new AppException(400, "Nenhuma imagem foi selecionada para envio.");
+        if (file.Length > 5_242_880)
+            throw new AppException(400, "A imagem excede o tamanho máximo permitido de 5 MB.");
+
         if (!await db.Products.AnyAsync(x => x.Id == productId, ct)) throw new AppException(404, "Produto não encontrado.");
         var stored = await files.SaveProductImageAsync(file, ct);
         if (isPrimary) await db.ProductPhotos.Where(x => x.ProductId == productId && x.IsPrimary)

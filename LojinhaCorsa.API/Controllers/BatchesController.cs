@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace LojinhaCorsa.API.Controllers;
 
-[ApiController, Authorize(Roles = Roles.Administrator), Route("api/admin/batches")]
+[ApiController, Authorize(Roles = Roles.Administrator), Route("api/admin/batches"), Route("admin/batches")]
 public sealed class BatchesController(AppDbContext db, ICurrentUser currentUser,
     IAuditService audit, IBatchService service) : ControllerBase
 {

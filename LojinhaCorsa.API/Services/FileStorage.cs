@@ -37,10 +37,12 @@ public sealed class LocalFileStorage(IWebHostEnvironment environment, IConfigura
     private async Task<StoredFile> SaveAsync(IFormFile file, string folder, HashSet<string> allowedTypes,
         long maxBytes, CancellationToken ct)
     {
-        if (file.Length <= 0 || file.Length > maxBytes)
-            throw new Infrastructure.AppException(400, $"O arquivo deve possuir entre 1 byte e {maxBytes} bytes.");
+        if (file.Length <= 0)
+            throw new Infrastructure.AppException(400, "O arquivo enviado está vazio.");
+        if (file.Length > maxBytes)
+            throw new Infrastructure.AppException(400, $"A imagem selecionada excede o limite máximo permitido de {maxBytes / (1024 * 1024)} MB.");
         if (!allowedTypes.Contains(file.ContentType.ToLowerInvariant()))
-            throw new Infrastructure.AppException(400, "Tipo de arquivo não permitido.");
+            throw new Infrastructure.AppException(400, "Formato de arquivo não suportado. Por favor, envie uma imagem nos formatos JPG, PNG ou WebP.");
 
         var extension = file.ContentType.ToLowerInvariant() switch
         {
@@ -48,7 +50,7 @@ public sealed class LocalFileStorage(IWebHostEnvironment environment, IConfigura
             "image/png" => ".png",
             "image/webp" => ".webp",
             "application/pdf" => ".pdf",
-            _ => throw new Infrastructure.AppException(400, "Tipo de arquivo não permitido.")
+            _ => throw new Infrastructure.AppException(400, "Formato de imagem não permitido. Envie JPG, PNG ou WebP.")
         };
         var storageKey = $"{folder}/{DateTime.UtcNow:yyyy/MM}/{Guid.NewGuid():N}{extension}";
         var absolutePath = GetAbsolutePath(storageKey);

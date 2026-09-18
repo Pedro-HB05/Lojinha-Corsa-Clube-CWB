@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace LojinhaCorsa.API.Controllers;
 
-[ApiController, Authorize(Roles = Roles.Administrator), Route("api/admin/payments")]
+[ApiController, Authorize(Roles = Roles.Administrator), Route("api/admin/payments"), Route("admin/payments")]
 public sealed class PaymentsController(AppDbContext db, IPaymentService service) : ControllerBase
 {
     [HttpGet("pending")]

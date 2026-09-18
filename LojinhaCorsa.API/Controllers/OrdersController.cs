@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace LojinhaCorsa.API.Controllers;
 
-[ApiController, Authorize, Route("api/orders")]
+[ApiController, Authorize, Route("api/orders"), Route("orders")]
 public sealed class OrdersController(AppDbContext db, IOrderService service, IPaymentService payments,
     IFileStorage files) : ControllerBase
 {

@@ -1,4 +1,12 @@
-const API_URL = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
+function resolveApiBaseUrl(): string {
+  const envUrl = (import.meta.env.VITE_API_URL || '/api').trim().replace(/\/$/, '')
+  if (envUrl === '/api' || envUrl.endsWith('/api')) {
+    return envUrl
+  }
+  return `${envUrl}/api`
+}
+
+const API_URL = resolveApiBaseUrl()
 const TOKEN_KEY = 'corsa.auth'
 
 export class ApiError extends Error {
@@ -21,7 +29,11 @@ export function getStoredToken() {
 }
 
 export function assetUrl(path: string) {
-  return `${API_URL}${path.startsWith('/') ? path : `/${path}`}`
+  const cleanPath = path.startsWith('/') ? path : `/${path}`
+  if (API_URL.endsWith('/api') && cleanPath.startsWith('/api/')) {
+    return `${API_URL}${cleanPath.slice(4)}`
+  }
+  return `${API_URL}${cleanPath}`
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -48,7 +60,21 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       try { details = JSON.parse(raw) } catch { /* resposta não JSON */ }
     }
     const record = details as Record<string, unknown> | null
-    const message = String(record?.message || record?.detail || record?.title || `Erro ${response.status}`)
+    let validationMsg = ''
+    if (record?.errors && typeof record.errors === 'object') {
+      const errObj = record.errors as Record<string, string[]>
+      const allMsgs = Object.values(errObj).flat().filter(Boolean)
+      if (allMsgs.length > 0) {
+        validationMsg = allMsgs.join(' ')
+      }
+    }
+    const message = String(
+      validationMsg ||
+      record?.message ||
+      record?.detail ||
+      record?.title ||
+      (response.status === 413 ? 'O arquivo enviado excede o limite máximo permitido de 5 MB.' : `Erro ${response.status}`)
+    )
     throw new ApiError(message, response.status, details)
   }
 

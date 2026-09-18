@@ -35,8 +35,14 @@ if (Encoding.UTF8.GetByteCount(jwtKey) < 32)
 
 connectionString = NormalizePostgresConnectionString(connectionString);
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(connectionString,
-        npgsql => npgsql.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery)));
+    options.UseNpgsql(connectionString, npgsql =>
+    {
+        npgsql.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
+        npgsql.EnableRetryOnFailure(
+            maxRetryCount: 5,
+            maxRetryDelay: TimeSpan.FromSeconds(10),
+            errorCodesToAdd: null);
+    }));
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUser, CurrentUser>();
 builder.Services.AddScoped<IAuditService, AuditService>();
@@ -71,8 +77,22 @@ var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get
 builder.Services.AddCors(options => options.AddPolicy("Frontend", policy =>
 {
     if (allowedOrigins.Length > 0)
-        policy.WithOrigins(allowedOrigins).AllowAnyHeader().AllowAnyMethod();
+    {
+        policy.WithOrigins(allowedOrigins).AllowAnyHeader().AllowAnyMethod().AllowCredentials();
+    }
+    else
+    {
+        policy.SetIsOriginAllowed(_ => true).AllowAnyHeader().AllowAnyMethod().AllowCredentials();
+    }
 }));
+
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor |
+                               Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto;
+    options.KnownIPNetworks.Clear();
+    options.KnownProxies.Clear();
+});
 
 // A autenticação usa JWT. Em desenvolvimento, substitui explicitamente o
 // provedor do Windows para não carregar chaves DPAPI de outro usuário/processo.
@@ -89,6 +109,7 @@ if (builder.Environment.IsDevelopment())
 }
 
 var app = builder.Build();
+app.UseForwardedHeaders();
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
 if (app.Environment.IsDevelopment())
@@ -126,7 +147,10 @@ static string NormalizePostgresConnectionString(string value)
         Username = Uri.UnescapeDataString(credentials[0]),
         Password = Uri.UnescapeDataString(credentials[1]),
         SslMode = SslMode.Require,
-        Pooling = true
+        Pooling = true,
+        Timeout = 30,
+        CommandTimeout = 60,
+        KeepAlive = 30
     };
     return builder.ConnectionString;
 }

@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace LojinhaCorsa.API.Controllers;
 
-[ApiController, Route("api/auth")]
+[ApiController, Route("api/auth"), Route("auth")]
 public sealed class AuthController(IAuthService service) : ControllerBase
 {
     [HttpPost("register")]

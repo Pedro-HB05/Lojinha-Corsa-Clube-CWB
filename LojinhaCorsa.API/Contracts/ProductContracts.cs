@@ -7,7 +7,7 @@ public sealed record CategoryRequest([Required, MaxLength(120)] string Name,
 
 public sealed record ProductRequest(Guid? CategoryId, [Required, MaxLength(180)] string Name,
     [Required, MaxLength(200)] string Slug, string? Description,
-    [Range(0, 9999999999.99)] decimal BasePrice, bool IsAvailable = true);
+    [Range(0.01, 9999999999.99, ErrorMessage = "O preço base deve ser no mínimo R$ 0,01.")] decimal BasePrice, bool IsAvailable = true);
 
 public sealed record AttributeDefinitionRequest([Required, MaxLength(80)] string Name,
     [Required, MaxLength(80)] string Code, int SortOrder = 0, bool IsRequired = true,
@@ -19,4 +19,4 @@ public sealed record VariationRequest([Required, MaxLength(255)] string DisplayN
 
 public sealed record QuantityDiscountRequest(
     [Range(2, 1000)] int MinimumQuantity,
-    [Range(typeof(decimal), "0.01", "9999999999.99")] decimal DiscountPerUnit);
+    [Range(0.01, 9999999999.99, ErrorMessage = "O desconto deve ser no mínimo R$ 0,01.")] decimal DiscountPerUnit);

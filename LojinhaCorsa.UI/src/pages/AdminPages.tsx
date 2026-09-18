@@ -1,4 +1,4 @@
-import { Check, ChevronRight, Eye, Filter, Gauge, Package, Pencil, Percent, Plus, ReceiptText, RefreshCw, Search, ShoppingBag, Trash2, Truck, UploadCloud, UserPlus, X } from 'lucide-react'
+import { AlertCircle, Check, ChevronRight, Eye, Filter, Gauge, Package, Pencil, Percent, Plus, ReceiptText, RefreshCw, Search, ShoppingBag, Trash2, Truck, UploadCloud, UserPlus, X } from 'lucide-react'
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { Empty, ErrorState, Field, Loading, Modal, PageHeader, Pagination, ProductImage, StatusBadge } from '../components/ui'
@@ -25,28 +25,940 @@ interface ProductFormState { id?: string; categoryId: string; name: string; slug
 const emptyProduct: ProductFormState = { categoryId: '', name: '', slug: '', description: '', basePrice: '', isAvailable: true }
 
 export function AdminProductsPage() {
-  const notify = useToast(); const [active, setActive] = useState(''); const [search, setSearch] = useState(''); const [editing, setEditing] = useState<ProductFormState | null>(null); const [manageId, setManageId] = useState<string>(); const [saving, setSaving] = useState(false)
-  const [categoryEditing, setCategoryEditing] = useState(false); const [categoryForm, setCategoryForm] = useState({ name: '', slug: '', description: '', isActive: true })
-  const products = useApi(() => api.get<ProductSummary[]>(`/admin/products?active=${active}`), [active]); const categories = useApi(() => api.get<Category[]>('/categories'), [])
+  const notify = useToast()
+  const [active, setActive] = useState('')
+  const [search, setSearch] = useState('')
+  const [editing, setEditing] = useState<ProductFormState | null>(null)
+  const [manageId, setManageId] = useState<string>()
+  const [saving, setSaving] = useState(false)
+  const [categoryEditing, setCategoryEditing] = useState(false)
+  const [categoryForm, setCategoryForm] = useState({ name: '', slug: '', description: '', isActive: true })
+
+  // Estados para foto obrigatória e gerenciamento na criação
+  const [productPhoto, setProductPhoto] = useState<File | null>(null)
+  const [photoPreview, setPhotoPreview] = useState<string>('')
+  const [photoError, setPhotoError] = useState<string>('')
+  const [goToManage, setGoToManage] = useState(true)
+
+  const products = useApi(() => api.get<ProductSummary[]>(`/admin/products?active=${active}`), [active])
+  const categories = useApi(() => api.get<Category[]>('/categories'), [])
   const filtered = (products.data || []).filter(product => product.name.toLowerCase().includes(search.toLowerCase()))
-  function openEdit(product?: ProductSummary) { setEditing(product ? { id: product.id, categoryId: product.categoryId || '', name: product.name, slug: product.slug, description: product.description || '', basePrice: String(product.basePrice), isAvailable: product.isAvailable !== false } : { ...emptyProduct, categoryId: categories.data?.[0]?.id || '' }) }
-  async function save(event: FormEvent) { event.preventDefault(); if (!editing) return; setSaving(true); try { const body = { ...editing, categoryId: editing.categoryId ? editing.categoryId : null, basePrice: Number(editing.basePrice) }; if (editing.id) await api.put(`/admin/products/${editing.id}`, body); else await api.post('/admin/products', body); notify(`Produto ${editing.id ? 'atualizado' : 'criado'} com sucesso.`); setEditing(null); await products.reload() } catch (error) { notify(errorMessage(error), 'error') } finally { setSaving(false) } }
-  async function toggle(product: ProductSummary) { try { await api.patch(`/admin/products/${product.id}/availability`, !(product.isAvailable ?? true)); notify('Disponibilidade atualizada.'); await products.reload() } catch (error) { notify(errorMessage(error), 'error') } }
-  async function saveCategory(event: FormEvent) { event.preventDefault(); try { await api.post('/admin/categories', categoryForm); notify('Categoria criada com sucesso.'); setCategoryEditing(false); setCategoryForm({ name: '', slug: '', description: '', isActive: true }); await categories.reload() } catch (error) { notify(errorMessage(error), 'error') } }
-  return <><PageHeader eyebrow="Catálogo" title="Produtos" description="Cadastre produtos, preços, fotos e variações." actions={<><button className="btn btn-secondary" onClick={() => setCategoryEditing(true)}><Plus /> Categoria</button><button className="btn btn-primary" onClick={() => openEdit()}><Plus /> Novo produto</button></>} /><div className="admin-toolbar"><div className="search-box"><Search /><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar por nome..." /></div><select value={active} onChange={e => setActive(e.target.value)}><option value="">Todos</option><option value="true">Disponíveis</option><option value="false">Indisponíveis</option></select></div>{products.loading ? <Loading /> : products.error ? <ErrorState message={products.error} retry={products.reload} /> : !filtered.length ? <Empty title="Nenhum produto" description="Crie uma categoria e cadastre o primeiro produto da lojinha." /> : <div className="table-wrap"><table><thead><tr><th>Produto</th><th>Preço base</th><th>Disponibilidade</th><th>Ações</th></tr></thead><tbody>{filtered.map(product => <tr key={product.id}><td><div className="table-product"><ProductImage photoId={product.photo?.id} alt={product.name} /><div><b>{product.name}</b><small>{product.slug}</small></div></div></td><td><b>{currency(product.basePrice)}</b></td><td><button className={`switch ${product.isAvailable !== false ? 'on' : ''}`} onClick={() => toggle(product)}><span /></button></td><td><div className="table-actions"><button title="Editar dados" onClick={() => openEdit(product)}><Pencil /></button><button title="Fotos e variações" onClick={() => setManageId(product.id)}><SettingsIcon /></button></div></td></tr>)}</tbody></table></div>}{editing && <Modal title={editing.id ? 'Editar produto' : 'Novo produto'} onClose={() => setEditing(null)} wide><form onSubmit={save}><div className="form-grid"><Field label="Nome"><input required value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value, slug: editing.id ? editing.slug : e.target.value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-') })} /></Field><Field label="Slug"><input required value={editing.slug} onChange={e => setEditing({ ...editing, slug: e.target.value })} /></Field><Field label="Categoria"><select required value={editing.categoryId} onChange={e => setEditing({ ...editing, categoryId: e.target.value })}><option value="">Selecione</option>{categories.data?.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select></Field><Field label="Preço base"><input required min="0" step="0.01" type="number" value={editing.basePrice} onChange={e => setEditing({ ...editing, basePrice: e.target.value })} /></Field><Field label="Descrição"><textarea rows={4} value={editing.description || ''} onChange={e => setEditing({ ...editing, description: e.target.value })} /></Field><Field label="Disponibilidade"><select value={String(editing.isAvailable)} onChange={e => setEditing({ ...editing, isAvailable: e.target.value === 'true' })}><option value="true">Disponível</option><option value="false">Indisponível</option></select></Field></div><div className="modal-actions"><button type="button" className="btn btn-ghost" onClick={() => setEditing(null)}>Cancelar</button><button className="btn btn-primary" disabled={saving}>{saving ? 'Salvando...' : 'Salvar produto'}</button></div></form></Modal>}{categoryEditing && <Modal title="Nova categoria" onClose={() => setCategoryEditing(false)}><form onSubmit={saveCategory}><Field label="Nome"><input required value={categoryForm.name} onChange={e => { const name = e.target.value; setCategoryForm({ ...categoryForm, name, slug: name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-') }) }} /></Field><Field label="Slug"><input required value={categoryForm.slug} onChange={e => setCategoryForm({ ...categoryForm, slug: e.target.value })} /></Field><Field label="Descrição"><textarea rows={3} value={categoryForm.description} onChange={e => setCategoryForm({ ...categoryForm, description: e.target.value })} /></Field><div className="modal-actions"><button type="button" className="btn btn-ghost" onClick={() => setCategoryEditing(false)}>Cancelar</button><button className="btn btn-primary">Criar categoria</button></div></form></Modal>}{manageId && <ProductManager productId={manageId} onClose={() => setManageId(undefined)} />}</>
+
+  function handlePhotoSelect(file?: File) {
+    setPhotoError('')
+    if (!file) {
+      setProductPhoto(null)
+      setPhotoPreview('')
+      return
+    }
+    const validTypes = ['image/jpeg', 'image/png', 'image/webp']
+    if (!validTypes.includes(file.type.toLowerCase())) {
+      setPhotoError('Formato inválido! Envie uma imagem nos formatos JPG, PNG ou WebP.')
+      setProductPhoto(null)
+      setPhotoPreview('')
+      return
+    }
+    const MAX_SIZE = 5 * 1024 * 1024
+    if (file.size > MAX_SIZE) {
+      const sizeMb = (file.size / (1024 * 1024)).toFixed(2)
+      setPhotoError(`A imagem selecionada possui ${sizeMb} MB e ultrapassa o limite máximo de 5 MB. Escolha uma imagem menor.`)
+      setProductPhoto(null)
+      setPhotoPreview('')
+      return
+    }
+    setProductPhoto(file)
+    setPhotoPreview(URL.createObjectURL(file))
+  }
+
+  function openEdit(product?: ProductSummary) {
+    setPhotoError('')
+    setProductPhoto(null)
+    setPhotoPreview('')
+    setGoToManage(true)
+    setEditing(product ? {
+      id: product.id,
+      categoryId: product.categoryId || '',
+      name: product.name,
+      slug: product.slug,
+      description: product.description || '',
+      basePrice: String(product.basePrice),
+      isAvailable: product.isAvailable !== false
+    } : {
+      ...emptyProduct,
+      categoryId: categories.data?.[0]?.id || ''
+    })
+  }
+
+  async function save(event: FormEvent) {
+    event.preventDefault()
+    if (!editing) return
+
+    const priceNum = Number(editing.basePrice)
+    if (isNaN(priceNum) || priceNum <= 0) {
+      notify('O preço base deve ser maior que zero (mínimo R$ 0,01).', 'error')
+      return
+    }
+
+    if (!editing.id && !productPhoto) {
+      setPhotoError('A imagem do produto é obrigatória para cadastro.')
+      notify('Selecione uma imagem principal para cadastrar o produto.', 'error')
+      return
+    }
+
+    if (photoError) {
+      notify(photoError, 'error')
+      return
+    }
+
+    setSaving(true)
+    try {
+      const body = {
+        ...editing,
+        categoryId: editing.categoryId ? editing.categoryId : null,
+        basePrice: priceNum
+      }
+
+      let targetId = editing.id
+
+      if (editing.id) {
+        await api.put(`/admin/products/${editing.id}`, body)
+        if (productPhoto) {
+          const form = new FormData()
+          form.append('file', productPhoto)
+          form.append('isPrimary', 'true')
+          await api.upload(`/admin/products/${editing.id}/photos`, form)
+        }
+        notify('Produto atualizado com sucesso.')
+      } else {
+        const created = await api.post<{ id: string }>('/admin/products', body)
+        targetId = created.id
+        if (productPhoto) {
+          const form = new FormData()
+          form.append('file', productPhoto)
+          form.append('isPrimary', 'true')
+          await api.upload(`/admin/products/${created.id}/photos`, form)
+        }
+        notify('Produto cadastrado com sucesso com imagem e preço!')
+      }
+
+      setEditing(null)
+      setProductPhoto(null)
+      setPhotoPreview('')
+      await products.reload()
+
+      if (goToManage && targetId) {
+        setManageId(targetId)
+      }
+    } catch (error) {
+      notify(errorMessage(error), 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function toggle(product: ProductSummary) {
+    try {
+      await api.patch(`/admin/products/${product.id}/availability`, !(product.isAvailable ?? true))
+      notify('Disponibilidade atualizada.')
+      await products.reload()
+    } catch (error) {
+      notify(errorMessage(error), 'error')
+    }
+  }
+
+  async function deleteProduct(product: ProductSummary) {
+    if (!confirm(`Tem certeza que deseja excluir o produto "${product.name}" permanentemente?\n\nEsta ação não poderá ser desfeita.`)) return
+    try {
+      await api.delete(`/admin/products/${product.id}`)
+      notify('Produto excluído com sucesso.')
+      await products.reload()
+    } catch (error) {
+      notify(errorMessage(error), 'error')
+    }
+  }
+
+  async function saveCategory(event: FormEvent) {
+    event.preventDefault()
+    try {
+      await api.post('/admin/categories', categoryForm)
+      notify('Categoria criada com sucesso.')
+      setCategoryEditing(false)
+      setCategoryForm({ name: '', slug: '', description: '', isActive: true })
+      await categories.reload()
+    } catch (error) {
+      notify(errorMessage(error), 'error')
+    }
+  }
+
+  return (
+    <>
+      <PageHeader
+        eyebrow="Catálogo"
+        title="Produtos"
+        description="Cadastre produtos, preços, fotos e variações."
+        actions={
+          <>
+            <button className="btn btn-secondary" onClick={() => setCategoryEditing(true)}>
+              <Plus /> Categoria
+            </button>
+            <button className="btn btn-primary" onClick={() => openEdit()}>
+              <Plus /> Novo produto
+            </button>
+          </>
+        }
+      />
+      <div className="admin-toolbar">
+        <div className="search-box">
+          <Search />
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Buscar por nome..."
+          />
+        </div>
+        <select value={active} onChange={e => setActive(e.target.value)}>
+          <option value="">Todos</option>
+          <option value="true">Disponíveis</option>
+          <option value="false">Indisponíveis</option>
+        </select>
+      </div>
+
+      {products.loading ? (
+        <Loading />
+      ) : products.error ? (
+        <ErrorState message={products.error} retry={products.reload} />
+      ) : !filtered.length ? (
+        <Empty
+          title="Nenhum produto"
+          description="Crie uma categoria e cadastre o primeiro produto da lojinha."
+        />
+      ) : (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Produto</th>
+                <th>Preço base</th>
+                <th>Disponibilidade</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(product => (
+                <tr key={product.id}>
+                  <td>
+                    <div className="table-product">
+                      <ProductImage photoId={product.photo?.id} alt={product.name} />
+                      <div>
+                        <b>{product.name}</b>
+                        <small>{product.slug}</small>
+                      </div>
+                    </div>
+                  </td>
+                  <td>
+                    <b>{currency(product.basePrice)}</b>
+                  </td>
+                  <td>
+                    <button
+                      className={`switch ${product.isAvailable !== false ? 'on' : ''}`}
+                      onClick={() => toggle(product)}
+                      title="Alternar disponibilidade"
+                    >
+                      <span />
+                    </button>
+                  </td>
+                  <td>
+                    <div className="table-actions">
+                      <button
+                        title="Editar dados"
+                        onClick={() => openEdit(product)}
+                      >
+                        <Pencil />
+                      </button>
+                      <button
+                        title="Fotos, variações e descontos"
+                        onClick={() => setManageId(product.id)}
+                      >
+                        <SettingsIcon />
+                      </button>
+                      <button
+                        title="Excluir produto permanentemente"
+                        className="danger"
+                        onClick={() => deleteProduct(product)}
+                      >
+                        <Trash2 />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {editing && (
+        <Modal
+          title={editing.id ? 'Editar produto' : 'Novo produto'}
+          onClose={() => setEditing(null)}
+          wide
+        >
+          <form onSubmit={save}>
+            <div className="product-modal-banner">
+              <strong>Regra do Catálogo:</strong> Todo produto só pode ser adicionado com <b>preço base</b> maior que zero e <b>foto de capa</b> (máximo de 5 MB).
+            </div>
+
+            <div className="form-grid">
+              <Field label="Nome do produto *">
+                <input
+                  required
+                  value={editing.name}
+                  onChange={e =>
+                    setEditing({
+                      ...editing,
+                      name: e.target.value,
+                      slug: editing.id
+                        ? editing.slug
+                        : e.target.value
+                            .toLowerCase()
+                            .normalize('NFD')
+                            .replace(/[\u0300-\u036f]/g, '')
+                            .replace(/[^a-z0-9]+/g, '-')
+                    })
+                  }
+                  placeholder="Ex.: Camiseta Oficial Corsa Clube"
+                />
+              </Field>
+
+              <Field label="Slug (URL do produto) *">
+                <input
+                  required
+                  value={editing.slug}
+                  onChange={e => setEditing({ ...editing, slug: e.target.value })}
+                  placeholder="camiseta-oficial-corsa-clube"
+                />
+              </Field>
+
+              <Field label="Categoria *">
+                <select
+                  required
+                  value={editing.categoryId}
+                  onChange={e => setEditing({ ...editing, categoryId: e.target.value })}
+                >
+                  <option value="">Selecione uma categoria</option>
+                  {categories.data?.map(category => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label="Preço base (R$) *">
+                <input
+                  required
+                  min="0.01"
+                  step="0.01"
+                  type="number"
+                  value={editing.basePrice}
+                  onChange={e => setEditing({ ...editing, basePrice: e.target.value })}
+                  placeholder="Ex.: 49.90"
+                />
+                <small className="field-hint">Obrigatório • Preço inicial mínimo de R$ 0,01.</small>
+              </Field>
+
+              <Field label="Descrição">
+                <textarea
+                  rows={3}
+                  value={editing.description || ''}
+                  onChange={e => setEditing({ ...editing, description: e.target.value })}
+                  placeholder="Informações sobre material, medidas ou modelo..."
+                />
+              </Field>
+
+              <Field label="Disponibilidade na loja">
+                <select
+                  value={String(editing.isAvailable)}
+                  onChange={e => setEditing({ ...editing, isAvailable: e.target.value === 'true' })}
+                >
+                  <option value="true">Disponível para venda</option>
+                  <option value="false">Indisponível / Oculto</option>
+                </select>
+              </Field>
+            </div>
+
+            {/* Upload de Foto Principal Obrigatória */}
+            <div className="product-image-section">
+              <div className="field-label">
+                <b>{editing.id ? 'Atualizar foto principal (opcional)' : 'Foto principal do produto * (Obrigatória)'}</b>
+                <small>Formatos aceitos: JPG, PNG, WebP • Tamanho máximo permitido: 5 MB</small>
+              </div>
+
+              <div className="product-upload-box">
+                <input
+                  id="product-main-photo-input"
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  style={{ display: 'none' }}
+                  onChange={e => handlePhotoSelect(e.target.files?.[0])}
+                />
+                <label htmlFor="product-main-photo-input" className="product-upload-trigger">
+                  <UploadCloud size={24} />
+                  <span>{productPhoto ? 'Substituir imagem selecionada' : 'Selecionar imagem do produto'}</span>
+                  <small>Clique para escolher uma imagem do seu computador</small>
+                </label>
+
+                {photoPreview && (
+                  <div className="product-photo-preview-box">
+                    <img src={photoPreview} alt="Pré-visualização" className="product-form-preview" />
+                    <div className="preview-meta">
+                      <b>{productPhoto?.name}</b>
+                      <small>{productPhoto ? (productPhoto.size / (1024 * 1024)).toFixed(2) : '0'} MB</small>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => handlePhotoSelect(undefined)}
+                      >
+                        Remover foto
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {photoError && (
+                <div className="form-error-banner">
+                  <AlertCircle size={18} />
+                  <span>{photoError}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Opção de Gerenciar Variações e Descontos logo após criar */}
+            {!editing.id && (
+              <div className="manage-after-create">
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={goToManage}
+                    onChange={e => setGoToManage(e.target.checked)}
+                  />
+                  <span>
+                    <b>Abrir painel de variações (tamanhos, cores) e descontos logo após salvar</b>
+                  </span>
+                </label>
+              </div>
+            )}
+
+            {editing.id && (
+              <div className="edit-manage-shortcut">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    setManageId(editing.id)
+                    setEditing(null)
+                  }}
+                >
+                  <SettingsIcon /> Gerenciar variações, fotos e descontos deste produto
+                </button>
+              </div>
+            )}
+
+            <div className="modal-actions">
+              <button type="button" className="btn btn-ghost" onClick={() => setEditing(null)}>
+                Cancelar
+              </button>
+              <button className="btn btn-primary" disabled={saving}>
+                {saving ? 'Salvando...' : editing.id ? 'Salvar alterações' : 'Cadastrar produto'}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {categoryEditing && (
+        <Modal title="Nova categoria" onClose={() => setCategoryEditing(false)}>
+          <form onSubmit={saveCategory}>
+            <Field label="Nome">
+              <input
+                required
+                value={categoryForm.name}
+                onChange={e => {
+                  const name = e.target.value
+                  setCategoryForm({
+                    ...categoryForm,
+                    name,
+                    slug: name
+                      .toLowerCase()
+                      .normalize('NFD')
+                      .replace(/[\u0300-\u036f]/g, '')
+                      .replace(/[^a-z0-9]+/g, '-')
+                  })
+                }}
+              />
+            </Field>
+            <Field label="Slug">
+              <input
+                required
+                value={categoryForm.slug}
+                onChange={e => setCategoryForm({ ...categoryForm, slug: e.target.value })}
+              />
+            </Field>
+            <Field label="Descrição">
+              <textarea
+                rows={3}
+                value={categoryForm.description}
+                onChange={e => setCategoryForm({ ...categoryForm, description: e.target.value })}
+              />
+            </Field>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setCategoryEditing(false)}
+              >
+                Cancelar
+              </button>
+              <button className="btn btn-primary">Criar categoria</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {manageId && <ProductManager productId={manageId} onClose={() => setManageId(undefined)} />}
+    </>
+  )
 }
 
-function SettingsIcon() { return <Filter /> }
+function SettingsIcon() {
+  return <Filter />
+}
 
 function ProductManager({ productId, onClose }: { productId: string; onClose(): void }) {
-  const notify = useToast(); const product = useApi(() => api.get<ProductDetail>(`/products/${productId}`), [productId]); const [tab, setTab] = useState<'photos' | 'attributes' | 'variations' | 'discounts'>('photos'); const [file, setFile] = useState<File>(); const [alt, setAlt] = useState(''); const [attribute, setAttribute] = useState({ name: '', code: '', values: '' }); const [variation, setVariation] = useState({ displayName: '', sku: '', priceOverride: '', attributeValueIds: [] as string[] }); const [discount, setDiscount] = useState({ minimumQuantity: '2', discountPerUnit: '' })
-  async function upload() { if (!file) return notify('Selecione uma imagem.', 'error'); try { const form = new FormData(); form.append('file', file); form.append('altText', alt); form.append('isPrimary', String(!product.data?.photos.length)); await api.upload(`/admin/products/${productId}/photos`, form); notify('Foto enviada.'); setFile(undefined); await product.reload() } catch (error) { notify(errorMessage(error), 'error') } }
-  async function addAttribute(event: FormEvent) { event.preventDefault(); try { await api.post(`/admin/products/${productId}/attributes`, { name: attribute.name, code: attribute.code, sortOrder: product.data?.attributes.length || 0, isRequired: true, values: attribute.values.split(',').map(v => v.trim()).filter(Boolean) }); notify('Atributo criado.'); setAttribute({ name: '', code: '', values: '' }); await product.reload() } catch (error) { notify(errorMessage(error), 'error') } }
-  async function addVariation(event: FormEvent) { event.preventDefault(); try { await api.post(`/admin/products/${productId}/variations`, { displayName: variation.displayName, sku: variation.sku, priceOverride: variation.priceOverride ? Number(variation.priceOverride) : null, isAvailable: true, attributeValueIds: variation.attributeValueIds }); notify('Variação criada.'); setVariation({ displayName: '', sku: '', priceOverride: '', attributeValueIds: [] }); await product.reload() } catch (error) { notify(errorMessage(error), 'error') } }
-  async function deletePhoto(id: string) { if (!confirm('Excluir esta foto?')) return; try { await api.delete(`/admin/product-photos/${id}`); notify('Foto removida.'); await product.reload() } catch (error) { notify(errorMessage(error), 'error') } }
-  async function addDiscount(event: FormEvent) { event.preventDefault(); try { await api.post(`/admin/products/${productId}/discounts`, { minimumQuantity: Number(discount.minimumQuantity), discountPerUnit: Number(discount.discountPerUnit) }); notify('Desconto por quantidade criado.'); setDiscount({ minimumQuantity: '2', discountPerUnit: '' }); await product.reload() } catch (error) { notify(errorMessage(error), 'error') } }
-  async function deleteDiscount(id: string) { if (!confirm('Excluir esta regra de desconto?')) return; try { await api.delete(`/admin/product-discounts/${id}`); notify('Regra de desconto removida.'); await product.reload() } catch (error) { notify(errorMessage(error), 'error') } }
-  return <Modal title="Gerenciar produto" onClose={onClose} wide>{product.loading ? <Loading /> : product.error || !product.data ? <ErrorState message={product.error} /> : <><div className="tabs"><button className={tab === 'photos' ? 'active' : ''} onClick={() => setTab('photos')}>Fotos</button><button className={tab === 'attributes' ? 'active' : ''} onClick={() => setTab('attributes')}>Atributos</button><button className={tab === 'variations' ? 'active' : ''} onClick={() => setTab('variations')}>Variações</button><button className={tab === 'discounts' ? 'active' : ''} onClick={() => setTab('discounts')}>Descontos</button></div>{tab === 'photos' && <div><div className="photo-manager">{product.data.photos.map(photo => <div key={photo.id}><ProductImage photoId={photo.id} alt={photo.altText || product.data!.name} /><button onClick={() => deletePhoto(photo.id)}><Trash2 /></button></div>)}</div><div className="inline-form"><input type="file" accept="image/*" onChange={e => setFile(e.target.files?.[0])} /><input value={alt} onChange={e => setAlt(e.target.value)} placeholder="Texto alternativo" /><button className="btn btn-primary" onClick={upload}><UploadCloud /> Enviar</button></div></div>}{tab === 'attributes' && <><div className="chip-list">{product.data.attributes.map(attr => <span key={attr.id}><b>{attr.name}:</b> {attr.values.map(v => v.value).join(', ')}</span>)}</div><form className="stack-form" onSubmit={addAttribute}><Field label="Nome"><input required value={attribute.name} onChange={e => setAttribute({ ...attribute, name: e.target.value })} placeholder="Ex.: Cor" /></Field><Field label="Código"><input required value={attribute.code} onChange={e => setAttribute({ ...attribute, code: e.target.value })} placeholder="cor" /></Field><Field label="Valores separados por vírgula"><input required value={attribute.values} onChange={e => setAttribute({ ...attribute, values: e.target.value })} placeholder="Preto, Branco, Vermelho" /></Field><button className="btn btn-primary">Adicionar atributo</button></form></>}{tab === 'variations' && <><div className="variation-list">{product.data.variations.map(item => <div key={item.id}><div><b>{item.displayName}</b><small>SKU {item.sku} • {item.attributes.map(a => a.value).join(' / ')}</small></div><b>{currency(item.price)}</b></div>)}</div><form className="stack-form" onSubmit={addVariation}><div className="form-grid"><Field label="Nome da variação"><input required value={variation.displayName} onChange={e => setVariation({ ...variation, displayName: e.target.value })} /></Field><Field label="SKU"><input required value={variation.sku} onChange={e => setVariation({ ...variation, sku: e.target.value })} /></Field><Field label="Preço específico (opcional)"><input type="number" min="0" step="0.01" value={variation.priceOverride} onChange={e => setVariation({ ...variation, priceOverride: e.target.value })} /></Field></div><div className="attribute-selector">{product.data.attributes.map(attr => <Field key={attr.id} label={attr.name}><select required value={variation.attributeValueIds.find(id => attr.values.some(v => v.id === id)) || ''} onChange={e => setVariation({ ...variation, attributeValueIds: [...variation.attributeValueIds.filter(id => !attr.values.some(v => v.id === id)), e.target.value] })}><option value="">Selecione</option>{attr.values.map(v => <option key={v.id} value={v.id}>{v.value}</option>)}</select></Field>)}</div><button className="btn btn-primary">Criar variação</button></form></>}{tab === 'discounts' && <><div className="discount-rule-list">{!product.data.discounts?.length ? <p>Nenhum desconto por quantidade cadastrado.</p> : product.data.discounts.map(rule => <div key={rule.id}><Percent size={18} /><span><b>A partir de {rule.minimumQuantity} peças</b><small>{currency(rule.discountPerUnit)} de desconto em cada unidade</small></span><button type="button" className="icon-btn danger" onClick={() => deleteDiscount(rule.id)} aria-label="Excluir desconto"><Trash2 size={17} /></button></div>)}</div><form className="stack-form discount-form" onSubmit={addDiscount}><div className="form-grid"><Field label="Quantidade mínima"><input required type="number" min="2" max="1000" value={discount.minimumQuantity} onChange={e => setDiscount({ ...discount, minimumQuantity: e.target.value })} /></Field><Field label="Desconto por unidade (R$)"><input required type="number" min="0.01" step="0.01" value={discount.discountPerUnit} onChange={e => setDiscount({ ...discount, discountPerUnit: e.target.value })} placeholder="10,00" /></Field></div><button className="btn btn-primary"><Percent size={17} /> Adicionar desconto</button></form></>}</>}</Modal>
+  const notify = useToast()
+  const product = useApi(() => api.get<ProductDetail>(`/products/${productId}`), [productId])
+  const [tab, setTab] = useState<'photos' | 'attributes' | 'variations' | 'discounts'>('photos')
+  const [file, setFile] = useState<File>()
+  const [filePreview, setFilePreview] = useState('')
+  const [alt, setAlt] = useState('')
+  const [uploadError, setUploadError] = useState('')
+  const [uploading, setUploading] = useState(false)
+
+  const [attribute, setAttribute] = useState({ name: '', code: '', values: '' })
+  const [variation, setVariation] = useState({
+    displayName: '',
+    sku: '',
+    priceOverride: '',
+    attributeValueIds: [] as string[]
+  })
+  const [discount, setDiscount] = useState({ minimumQuantity: '2', discountPerUnit: '' })
+
+  function handleFileSelect(selected?: File) {
+    setUploadError('')
+    if (!selected) {
+      setFile(undefined)
+      setFilePreview('')
+      return
+    }
+    const validTypes = ['image/jpeg', 'image/png', 'image/webp']
+    if (!validTypes.includes(selected.type.toLowerCase())) {
+      setUploadError('Formato de imagem não suportado. Por favor envie JPG, PNG ou WebP.')
+      setFile(undefined)
+      setFilePreview('')
+      return
+    }
+    const MAX_SIZE = 5 * 1024 * 1024
+    if (selected.size > MAX_SIZE) {
+      const sizeMb = (selected.size / (1024 * 1024)).toFixed(2)
+      setUploadError(`A imagem possui ${sizeMb} MB e ultrapassa o limite máximo permitido de 5 MB. Selecione uma imagem menor.`)
+      setFile(undefined)
+      setFilePreview('')
+      return
+    }
+    setFile(selected)
+    setFilePreview(URL.createObjectURL(selected))
+  }
+
+  async function upload() {
+    if (!file) return notify('Selecione uma imagem para enviar.', 'error')
+    if (uploadError) return notify(uploadError, 'error')
+    setUploading(true)
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      form.append('altText', alt)
+      form.append('isPrimary', String(!product.data?.photos.length))
+      await api.upload(`/admin/products/${productId}/photos`, form)
+      notify('Foto enviada com sucesso.')
+      setFile(undefined)
+      setFilePreview('')
+      setAlt('')
+      await product.reload()
+    } catch (error) {
+      notify(errorMessage(error), 'error')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  async function addAttribute(event: FormEvent) {
+    event.preventDefault()
+    try {
+      await api.post(`/admin/products/${productId}/attributes`, {
+        name: attribute.name,
+        code: attribute.code,
+        sortOrder: product.data?.attributes.length || 0,
+        isRequired: true,
+        values: attribute.values
+          .split(',')
+          .map(v => v.trim())
+          .filter(Boolean)
+      })
+      notify('Atributo criado com sucesso.')
+      setAttribute({ name: '', code: '', values: '' })
+      await product.reload()
+    } catch (error) {
+      notify(errorMessage(error), 'error')
+    }
+  }
+
+  async function addVariation(event: FormEvent) {
+    event.preventDefault()
+    try {
+      await api.post(`/admin/products/${productId}/variations`, {
+        displayName: variation.displayName,
+        sku: variation.sku,
+        priceOverride: variation.priceOverride ? Number(variation.priceOverride) : null,
+        isAvailable: true,
+        attributeValueIds: variation.attributeValueIds
+      })
+      notify('Variação criada com sucesso.')
+      setVariation({ displayName: '', sku: '', priceOverride: '', attributeValueIds: [] })
+      await product.reload()
+    } catch (error) {
+      notify(errorMessage(error), 'error')
+    }
+  }
+
+  async function deletePhoto(id: string) {
+    if (!confirm('Excluir esta foto?')) return
+    try {
+      await api.delete(`/admin/product-photos/${id}`)
+      notify('Foto removida.')
+      await product.reload()
+    } catch (error) {
+      notify(errorMessage(error), 'error')
+    }
+  }
+
+  async function addDiscount(event: FormEvent) {
+    event.preventDefault()
+    try {
+      await api.post(`/admin/products/${productId}/discounts`, {
+        minimumQuantity: Number(discount.minimumQuantity),
+        discountPerUnit: Number(discount.discountPerUnit)
+      })
+      notify('Desconto por quantidade criado.')
+      setDiscount({ minimumQuantity: '2', discountPerUnit: '' })
+      await product.reload()
+    } catch (error) {
+      notify(errorMessage(error), 'error')
+    }
+  }
+
+  async function deleteDiscount(id: string) {
+    if (!confirm('Excluir esta regra de desconto?')) return
+    try {
+      await api.delete(`/admin/product-discounts/${id}`)
+      notify('Regra de desconto removida.')
+      await product.reload()
+    } catch (error) {
+      notify(errorMessage(error), 'error')
+    }
+  }
+
+  return (
+    <Modal title="Gerenciar produto" onClose={onClose} wide>
+      {product.loading ? (
+        <Loading />
+      ) : product.error || !product.data ? (
+        <ErrorState message={product.error} />
+      ) : (
+        <>
+          <div className="tabs">
+            <button
+              className={tab === 'photos' ? 'active' : ''}
+              onClick={() => setTab('photos')}
+            >
+              Fotos
+            </button>
+            <button
+              className={tab === 'attributes' ? 'active' : ''}
+              onClick={() => setTab('attributes')}
+            >
+              Atributos
+            </button>
+            <button
+              className={tab === 'variations' ? 'active' : ''}
+              onClick={() => setTab('variations')}
+            >
+              Variações
+            </button>
+            <button
+              className={tab === 'discounts' ? 'active' : ''}
+              onClick={() => setTab('discounts')}
+            >
+              Descontos
+            </button>
+          </div>
+
+          {tab === 'photos' && (
+            <div>
+              <div className="photo-manager">
+                {product.data.photos.map(photo => (
+                  <div key={photo.id}>
+                    <ProductImage photoId={photo.id} alt={photo.altText || product.data!.name} />
+                    <button
+                      onClick={() => deletePhoto(photo.id)}
+                      title="Excluir foto"
+                    >
+                      <Trash2 />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <div className="product-upload-guidelines">
+                <small>Formatos aceitos: JPG, PNG, WebP • Limite máximo por imagem: 5 MB</small>
+              </div>
+
+              <div className="inline-form">
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={e => handleFileSelect(e.target.files?.[0])}
+                />
+                <input
+                  value={alt}
+                  onChange={e => setAlt(e.target.value)}
+                  placeholder="Texto alternativo (opcional)"
+                />
+                <button
+                  className="btn btn-primary"
+                  onClick={upload}
+                  disabled={uploading || !file}
+                >
+                  <UploadCloud /> {uploading ? 'Enviando...' : 'Enviar foto'}
+                </button>
+              </div>
+
+              {filePreview && (
+                <div className="product-photo-preview-box" style={{ marginTop: '12px' }}>
+                  <img src={filePreview} alt="Preview" className="product-form-preview" />
+                  <div className="preview-meta">
+                    <b>{file?.name}</b>
+                    <small>{file ? (file.size / (1024 * 1024)).toFixed(2) : '0'} MB</small>
+                  </div>
+                </div>
+              )}
+
+              {uploadError && (
+                <div className="form-error-banner" style={{ marginTop: '12px' }}>
+                  <AlertCircle size={18} />
+                  <span>{uploadError}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {tab === 'attributes' && (
+            <>
+              <div className="chip-list">
+                {product.data.attributes.map(attr => (
+                  <span key={attr.id}>
+                    <b>{attr.name}:</b> {attr.values.map(v => v.value).join(', ')}
+                  </span>
+                ))}
+              </div>
+              <form className="stack-form" onSubmit={addAttribute}>
+                <Field label="Nome">
+                  <input
+                    required
+                    value={attribute.name}
+                    onChange={e => setAttribute({ ...attribute, name: e.target.value })}
+                    placeholder="Ex.: Tamanho"
+                  />
+                </Field>
+                <Field label="Código">
+                  <input
+                    required
+                    value={attribute.code}
+                    onChange={e => setAttribute({ ...attribute, code: e.target.value })}
+                    placeholder="tamanho"
+                  />
+                </Field>
+                <Field label="Valores separados por vírgula">
+                  <input
+                    required
+                    value={attribute.values}
+                    onChange={e => setAttribute({ ...attribute, values: e.target.value })}
+                    placeholder="P, M, G, GG"
+                  />
+                </Field>
+                <button className="btn btn-primary">Adicionar atributo</button>
+              </form>
+            </>
+          )}
+
+          {tab === 'variations' && (
+            <>
+              <div className="variation-list">
+                {product.data.variations.map(item => (
+                  <div key={item.id}>
+                    <div>
+                      <b>{item.displayName}</b>
+                      <small>
+                        SKU {item.sku} • {item.attributes.map(a => a.value).join(' / ')}
+                      </small>
+                    </div>
+                    <b>{currency(item.price)}</b>
+                  </div>
+                ))}
+              </div>
+              <form className="stack-form" onSubmit={addVariation}>
+                <div className="form-grid">
+                  <Field label="Nome da variação">
+                    <input
+                      required
+                      value={variation.displayName}
+                      onChange={e => setVariation({ ...variation, displayName: e.target.value })}
+                      placeholder="Ex.: Tamanho G"
+                    />
+                  </Field>
+                  <Field label="SKU">
+                    <input
+                      required
+                      value={variation.sku}
+                      onChange={e => setVariation({ ...variation, sku: e.target.value })}
+                      placeholder="CAM-G"
+                    />
+                  </Field>
+                  <Field label="Preço específico (opcional)">
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      value={variation.priceOverride}
+                      onChange={e =>
+                        setVariation({ ...variation, priceOverride: e.target.value })
+                      }
+                      placeholder="Se deixar vazio, usa o preço base"
+                    />
+                  </Field>
+                </div>
+                <div className="attribute-selector">
+                  {product.data.attributes.map(attr => (
+                    <Field key={attr.id} label={attr.name}>
+                      <select
+                        required
+                        value={
+                          variation.attributeValueIds.find(id =>
+                            attr.values.some(v => v.id === id)
+                          ) || ''
+                        }
+                        onChange={e =>
+                          setVariation({
+                            ...variation,
+                            attributeValueIds: [
+                              ...variation.attributeValueIds.filter(
+                                id => !attr.values.some(v => v.id === id)
+                              ),
+                              e.target.value
+                            ]
+                          })
+                        }
+                      >
+                        <option value="">Selecione</option>
+                        {attr.values.map(v => (
+                          <option key={v.id} value={v.id}>
+                            {v.value}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  ))}
+                </div>
+                <button className="btn btn-primary">Criar variação</button>
+              </form>
+            </>
+          )}
+
+          {tab === 'discounts' && (
+            <>
+              <div className="discount-rule-list">
+                {!product.data.discounts?.length ? (
+                  <p>Nenhum desconto por quantidade cadastrado.</p>
+                ) : (
+                  product.data.discounts.map(rule => (
+                    <div key={rule.id}>
+                      <Percent size={18} />
+                      <span>
+                        <b>A partir de {rule.minimumQuantity} peças</b>
+                        <small>
+                          {currency(rule.discountPerUnit)} de desconto em cada unidade
+                        </small>
+                      </span>
+                      <button
+                        type="button"
+                        className="icon-btn danger"
+                        onClick={() => deleteDiscount(rule.id)}
+                        aria-label="Excluir desconto"
+                      >
+                        <Trash2 size={17} />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+              <form className="stack-form discount-form" onSubmit={addDiscount}>
+                <div className="form-grid">
+                  <Field label="Quantidade mínima">
+                    <input
+                      required
+                      type="number"
+                      min="2"
+                      max="1000"
+                      value={discount.minimumQuantity}
+                      onChange={e =>
+                        setDiscount({ ...discount, minimumQuantity: e.target.value })
+                      }
+                    />
+                  </Field>
+                  <Field label="Desconto por unidade (R$)">
+                    <input
+                      required
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      value={discount.discountPerUnit}
+                      onChange={e =>
+                        setDiscount({ ...discount, discountPerUnit: e.target.value })
+                      }
+                      placeholder="10,00"
+                    />
+                  </Field>
+                </div>
+                <button className="btn btn-primary">
+                  <Percent size={17} /> Adicionar desconto
+                </button>
+              </form>
+            </>
+          )}
+        </>
+      )}
+    </Modal>
+  )
 }
 
 export function AdminOrdersPage() {

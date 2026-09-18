@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace LojinhaCorsa.API.Controllers;
 
-[ApiController, Authorize(Roles = Roles.Administrator), Route("api/admin")]
+[ApiController, Authorize(Roles = Roles.Administrator), Route("api/admin"), Route("admin")]
 public sealed class AdministrationController(AppDbContext db, ICurrentUser currentUser, IAuditService audit) : ControllerBase
 {
     [HttpGet("administrators")]

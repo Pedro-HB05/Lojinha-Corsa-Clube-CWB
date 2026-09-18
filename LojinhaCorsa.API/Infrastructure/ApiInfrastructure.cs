@@ -28,6 +28,17 @@ public sealed class ExceptionHandlingMiddleware(RequestDelegate next, ILogger<Ex
             await WriteProblem(context, StatusCodes.Status409Conflict,
                 "A operação viola uma regra de integridade ou utiliza dados duplicados.");
         }
+        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+        {
+            // O navegador do cliente cancelou a requisição (ex: recarregou ou trocou de página)
+            logger.LogInformation("Requisição cancelada pelo cliente (RequestAborted). Path: {Path}", context.Request.Path);
+        }
+        catch (OperationCanceledException ex)
+        {
+            logger.LogWarning(ex, "Operação cancelada por tempo limite ou banco ocupado. Path: {Path}", context.Request.Path);
+            await WriteProblem(context, StatusCodes.Status504GatewayTimeout,
+                "O servidor de banco de dados demorou para responder. Por favor, tente novamente.");
+        }
         catch (Exception ex)
         {
             logger.LogError(ex, "Erro não tratado. TraceId: {TraceId}", context.TraceIdentifier);

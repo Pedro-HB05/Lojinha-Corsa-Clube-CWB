@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace LojinhaCorsa.API.Controllers;
 
-[ApiController, Route("api/pix")]
+[ApiController, Route("api/pix"), Route("pix")]
 public sealed class PixController(AppDbContext db, ICurrentUser currentUser, IAuditService audit) : ControllerBase
 {
     [Authorize, HttpGet]
