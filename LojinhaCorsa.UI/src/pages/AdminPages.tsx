@@ -5,7 +5,7 @@ import { Empty, ErrorState, Field, Loading, Modal, PageHeader, Pagination, Produ
 import { useToast } from '../contexts/ToastContext'
 import { useApi } from '../hooks/useApi'
 import { api } from '../services/api'
-import type { AdministratorSummary, BatchDetail, BatchSummary, Category, DashboardData, OrderDetail, OrderSummary, PagedResult, PendingPayment, PixSettings, ProductDetail, ProductSummary } from '../types'
+import type { AdministratorSummary, BatchDetail, BatchSummary, DashboardData, OrderDetail, OrderSummary, PagedResult, PendingPayment, PixSettings, ProductDetail, ProductSummary } from '../types'
 import { currency, dateTime, errorMessage, labelStatus } from '../utils/format'
 
 function StatCard({ label, value, icon, tone = '' }: { label: string; value: number | string; icon: React.ReactNode; tone?: string }) {
@@ -31,17 +31,12 @@ export function AdminProductsPage() {
   const [editing, setEditing] = useState<ProductFormState | null>(null)
   const [manageId, setManageId] = useState<string>()
   const [saving, setSaving] = useState(false)
-  const [categoryEditing, setCategoryEditing] = useState(false)
-  const [categoryForm, setCategoryForm] = useState({ name: '', slug: '', description: '', isActive: true })
 
-  // Estados para foto obrigatória e gerenciamento na criação
   const [productPhoto, setProductPhoto] = useState<File | null>(null)
   const [photoPreview, setPhotoPreview] = useState<string>('')
   const [photoError, setPhotoError] = useState<string>('')
-  const [goToManage, setGoToManage] = useState(true)
 
   const products = useApi(() => api.get<ProductSummary[]>(`/admin/products?active=${active}`), [active])
-  const categories = useApi(() => api.get<Category[]>('/categories'), [])
   const filtered = (products.data || []).filter(product => product.name.toLowerCase().includes(search.toLowerCase()))
 
   function handlePhotoSelect(file?: File) {
@@ -74,7 +69,6 @@ export function AdminProductsPage() {
     setPhotoError('')
     setProductPhoto(null)
     setPhotoPreview('')
-    setGoToManage(true)
     setEditing(product ? {
       id: product.id,
       categoryId: product.categoryId || '',
@@ -83,10 +77,7 @@ export function AdminProductsPage() {
       description: product.description || '',
       basePrice: String(product.basePrice),
       isAvailable: product.isAvailable !== false
-    } : {
-      ...emptyProduct,
-      categoryId: categories.data?.[0]?.id || ''
-    })
+    } : { ...emptyProduct })
   }
 
   async function save(event: FormEvent) {
@@ -112,16 +103,15 @@ export function AdminProductsPage() {
 
     setSaving(true)
     try {
-      const body = {
-        ...editing,
-        categoryId: editing.categoryId ? editing.categoryId : null,
-        basePrice: priceNum
-      }
-
-      let targetId = editing.id
-
       if (editing.id) {
-        await api.put(`/admin/products/${editing.id}`, body)
+        await api.put(`/admin/products/${editing.id}`, {
+          categoryId: editing.categoryId || null,
+          name: editing.name,
+          slug: editing.slug,
+          description: editing.description,
+          basePrice: priceNum,
+          isAvailable: editing.isAvailable
+        })
         if (productPhoto) {
           const form = new FormData()
           form.append('file', productPhoto)
@@ -130,25 +120,19 @@ export function AdminProductsPage() {
         }
         notify('Produto atualizado com sucesso.')
       } else {
-        const created = await api.post<{ id: string }>('/admin/products', body)
-        targetId = created.id
-        if (productPhoto) {
-          const form = new FormData()
-          form.append('file', productPhoto)
-          form.append('isPrimary', 'true')
-          await api.upload(`/admin/products/${created.id}/photos`, form)
-        }
-        notify('Produto cadastrado com sucesso com imagem e preço!')
+        const form = new FormData()
+        form.append('name', editing.name)
+        form.append('description', editing.description)
+        form.append('price', String(priceNum))
+        form.append('photo', productPhoto!)
+        await api.upload<{ id: string }>('/admin/products/simple', form)
+        notify('Produto salvo e disponível para compra.')
       }
 
       setEditing(null)
       setProductPhoto(null)
       setPhotoPreview('')
       await products.reload()
-
-      if (goToManage && targetId) {
-        setManageId(targetId)
-      }
     } catch (error) {
       notify(errorMessage(error), 'error')
     } finally {
@@ -177,35 +161,13 @@ export function AdminProductsPage() {
     }
   }
 
-  async function saveCategory(event: FormEvent) {
-    event.preventDefault()
-    try {
-      await api.post('/admin/categories', categoryForm)
-      notify('Categoria criada com sucesso.')
-      setCategoryEditing(false)
-      setCategoryForm({ name: '', slug: '', description: '', isActive: true })
-      await categories.reload()
-    } catch (error) {
-      notify(errorMessage(error), 'error')
-    }
-  }
-
   return (
     <>
       <PageHeader
         eyebrow="Catálogo"
         title="Produtos"
-        description="Cadastre produtos, preços, fotos e variações."
-        actions={
-          <>
-            <button className="btn btn-secondary" onClick={() => setCategoryEditing(true)}>
-              <Plus /> Categoria
-            </button>
-            <button className="btn btn-primary" onClick={() => openEdit()}>
-              <Plus /> Novo produto
-            </button>
-          </>
-        }
+        description="Preencha os dados básicos e salve. O produto já fica pronto para venda."
+        actions={<button className="btn btn-primary" onClick={() => openEdit()}><Plus /> Novo produto</button>}
       />
       <div className="admin-toolbar">
         <div className="search-box">
@@ -230,7 +192,7 @@ export function AdminProductsPage() {
       ) : !filtered.length ? (
         <Empty
           title="Nenhum produto"
-          description="Crie uma categoria e cadastre o primeiro produto da lojinha."
+          description="Cadastre o primeiro produto da lojinha."
         />
       ) : (
         <div className="table-wrap">
@@ -276,7 +238,7 @@ export function AdminProductsPage() {
                         <Pencil />
                       </button>
                       <button
-                        title="Fotos, variações e descontos"
+                        title="Opções avançadas"
                         onClick={() => setManageId(product.id)}
                       >
                         <SettingsIcon />
@@ -304,57 +266,19 @@ export function AdminProductsPage() {
           wide
         >
           <form onSubmit={save}>
-            <div className="product-modal-banner">
-              <strong>Regra do Catálogo:</strong> Todo produto só pode ser adicionado com <b>preço base</b> maior que zero e <b>foto de capa</b> (máximo de 5 MB).
-            </div>
+            {!editing.id && <div className="product-modal-banner">Preencha, salve e pronto. O produto será publicado com uma opção padrão para compra.</div>}
 
             <div className="form-grid">
               <Field label="Nome do produto *">
                 <input
                   required
                   value={editing.name}
-                  onChange={e =>
-                    setEditing({
-                      ...editing,
-                      name: e.target.value,
-                      slug: editing.id
-                        ? editing.slug
-                        : e.target.value
-                            .toLowerCase()
-                            .normalize('NFD')
-                            .replace(/[\u0300-\u036f]/g, '')
-                            .replace(/[^a-z0-9]+/g, '-')
-                    })
-                  }
+                  onChange={e => setEditing({ ...editing, name: e.target.value })}
                   placeholder="Ex.: Camiseta Oficial Corsa Clube"
                 />
               </Field>
 
-              <Field label="Slug (URL do produto) *">
-                <input
-                  required
-                  value={editing.slug}
-                  onChange={e => setEditing({ ...editing, slug: e.target.value })}
-                  placeholder="camiseta-oficial-corsa-clube"
-                />
-              </Field>
-
-              <Field label="Categoria *">
-                <select
-                  required
-                  value={editing.categoryId}
-                  onChange={e => setEditing({ ...editing, categoryId: e.target.value })}
-                >
-                  <option value="">Selecione uma categoria</option>
-                  {categories.data?.map(category => (
-                    <option key={category.id} value={category.id}>
-                      {category.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-
-              <Field label="Preço base (R$) *">
+              <Field label="Preço (R$) *">
                 <input
                   required
                   min="0.01"
@@ -364,7 +288,7 @@ export function AdminProductsPage() {
                   onChange={e => setEditing({ ...editing, basePrice: e.target.value })}
                   placeholder="Ex.: 49.90"
                 />
-                <small className="field-hint">Obrigatório • Preço inicial mínimo de R$ 0,01.</small>
+                <small className="field-hint">Preço mínimo de R$ 0,01.</small>
               </Field>
 
               <Field label="Descrição">
@@ -376,15 +300,6 @@ export function AdminProductsPage() {
                 />
               </Field>
 
-              <Field label="Disponibilidade na loja">
-                <select
-                  value={String(editing.isAvailable)}
-                  onChange={e => setEditing({ ...editing, isAvailable: e.target.value === 'true' })}
-                >
-                  <option value="true">Disponível para venda</option>
-                  <option value="false">Indisponível / Oculto</option>
-                </select>
-              </Field>
             </div>
 
             {/* Upload de Foto Principal Obrigatória */}
@@ -434,93 +349,13 @@ export function AdminProductsPage() {
               )}
             </div>
 
-            {/* Opção de Gerenciar Variações e Descontos logo após criar */}
-            {!editing.id && (
-              <div className="manage-after-create">
-                <label className="checkbox-label">
-                  <input
-                    type="checkbox"
-                    checked={goToManage}
-                    onChange={e => setGoToManage(e.target.checked)}
-                  />
-                  <span>
-                    <b>Abrir painel de variações (tamanhos, cores) e descontos logo após salvar</b>
-                  </span>
-                </label>
-              </div>
-            )}
-
-            {editing.id && (
-              <div className="edit-manage-shortcut">
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={() => {
-                    setManageId(editing.id)
-                    setEditing(null)
-                  }}
-                >
-                  <SettingsIcon /> Gerenciar variações, fotos e descontos deste produto
-                </button>
-              </div>
-            )}
-
             <div className="modal-actions">
               <button type="button" className="btn btn-ghost" onClick={() => setEditing(null)}>
                 Cancelar
               </button>
               <button className="btn btn-primary" disabled={saving}>
-                {saving ? 'Salvando...' : editing.id ? 'Salvar alterações' : 'Cadastrar produto'}
+                {saving ? 'Salvando...' : 'Salvar produto'}
               </button>
-            </div>
-          </form>
-        </Modal>
-      )}
-
-      {categoryEditing && (
-        <Modal title="Nova categoria" onClose={() => setCategoryEditing(false)}>
-          <form onSubmit={saveCategory}>
-            <Field label="Nome">
-              <input
-                required
-                value={categoryForm.name}
-                onChange={e => {
-                  const name = e.target.value
-                  setCategoryForm({
-                    ...categoryForm,
-                    name,
-                    slug: name
-                      .toLowerCase()
-                      .normalize('NFD')
-                      .replace(/[\u0300-\u036f]/g, '')
-                      .replace(/[^a-z0-9]+/g, '-')
-                  })
-                }}
-              />
-            </Field>
-            <Field label="Slug">
-              <input
-                required
-                value={categoryForm.slug}
-                onChange={e => setCategoryForm({ ...categoryForm, slug: e.target.value })}
-              />
-            </Field>
-            <Field label="Descrição">
-              <textarea
-                rows={3}
-                value={categoryForm.description}
-                onChange={e => setCategoryForm({ ...categoryForm, description: e.target.value })}
-              />
-            </Field>
-            <div className="modal-actions">
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={() => setCategoryEditing(false)}
-              >
-                Cancelar
-              </button>
-              <button className="btn btn-primary">Criar categoria</button>
             </div>
           </form>
         </Modal>

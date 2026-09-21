@@ -6,6 +6,8 @@ using LojinhaCorsa.API.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Globalization;
+using System.Text;
 
 namespace LojinhaCorsa.API.Controllers;
 
@@ -84,9 +86,73 @@ public sealed class ProductsController(AppDbContext db, ICurrentUser currentUser
             Name = request.Name.Trim(), Slug = request.Slug.Trim().ToLowerInvariant(), Description = request.Description?.Trim(),
             BasePrice = request.BasePrice, IsAvailable = request.IsAvailable, CreatedAt = now, UpdatedAt = now,
             CreatedBy = currentUser.UserId, UpdatedBy = currentUser.UserId };
-        db.Add(product); audit.Add("Product", product.Id, "ProductCreated");
+        db.AddRange(product, CreateDefaultVariation(product.Id, now));
+        audit.Add("Product", product.Id, "ProductCreated");
         await db.SaveChangesAsync(ct);
         return CreatedAtAction(nameof(GetProduct), new { id = product.Id }, new { product.Id });
+    }
+
+    [Authorize(Roles = Roles.Administrator), HttpPost("admin/products/simple")]
+    [Consumes("multipart/form-data")]
+    [RequestSizeLimit(6_291_456)]
+    public async Task<IActionResult> CreateSimpleProduct([FromForm] SimpleProductRequest request, CancellationToken ct)
+    {
+        if (request.Price <= 0)
+            throw new AppException(400, "O preço deve ser maior que zero.");
+        if (request.Photo is null || request.Photo.Length == 0)
+            throw new AppException(400, "Selecione uma foto do produto.");
+
+        var now = DateTimeOffset.UtcNow;
+        var productId = Guid.NewGuid();
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        StoredFile? stored = null;
+        try
+        {
+            stored = await files.SaveProductImageAsync(request.Photo, ct);
+            var product = new Product
+            {
+                Id = productId,
+                Name = request.Name.Trim(),
+                Slug = CreateSlug(request.Name, productId),
+                Description = request.Description?.Trim(),
+                BasePrice = request.Price,
+                IsAvailable = true,
+                CreatedAt = now,
+                UpdatedAt = now,
+                CreatedBy = currentUser.UserId,
+                UpdatedBy = currentUser.UserId
+            };
+            var variation = CreateDefaultVariation(productId, now);
+            var photo = new ProductPhoto
+            {
+                Id = Guid.NewGuid(),
+                ProductId = productId,
+                StorageKey = stored.StorageKey,
+                OriginalFileName = stored.OriginalName,
+                MimeType = stored.MimeType,
+                FileSizeBytes = stored.Size,
+                AltText = product.Name,
+                IsPrimary = true,
+                CreatedAt = now,
+                CreatedBy = currentUser.UserId
+            };
+
+            db.AddRange(product, variation, photo);
+            audit.Add("Product", productId, "ProductCreated", details: new { SimpleRegistration = true });
+            await db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+            return CreatedAtAction(nameof(GetProduct), new { id = productId }, new { id = productId });
+        }
+        catch
+        {
+            await transaction.RollbackAsync(ct);
+            if (stored is not null)
+            {
+                var path = files.GetAbsolutePath(stored.StorageKey);
+                if (System.IO.File.Exists(path)) System.IO.File.Delete(path);
+            }
+            throw;
+        }
     }
 
     [Authorize(Roles = Roles.Administrator), HttpDelete("admin/products/{id:guid}")]
@@ -346,5 +412,42 @@ public sealed class ProductsController(AppDbContext db, ICurrentUser currentUser
     {
         if (categoryId.HasValue && !await db.Categories.AnyAsync(x => x.Id == categoryId, ct))
             throw new AppException(400, "Categoria inválida.");
+    }
+
+    private ProductVariation CreateDefaultVariation(Guid productId, DateTimeOffset now) => new()
+    {
+        Id = Guid.NewGuid(),
+        ProductId = productId,
+        DisplayName = "Padrão",
+        IsAvailable = true,
+        CreatedAt = now,
+        UpdatedAt = now,
+        CreatedBy = currentUser.UserId,
+        UpdatedBy = currentUser.UserId
+    };
+
+    private static string CreateSlug(string value, Guid id)
+    {
+        var normalized = value.Trim().ToLowerInvariant().Normalize(NormalizationForm.FormD);
+        var slug = new StringBuilder(normalized.Length);
+        var separatorPending = false;
+
+        foreach (var character in normalized)
+        {
+            if (CharUnicodeInfo.GetUnicodeCategory(character) == UnicodeCategory.NonSpacingMark)
+                continue;
+            if (char.IsLetterOrDigit(character))
+            {
+                if (separatorPending && slug.Length > 0) slug.Append('-');
+                slug.Append(character);
+                separatorPending = false;
+            }
+            else
+            {
+                separatorPending = true;
+            }
+        }
+
+        return slug.Length == 0 ? $"produto-{id:N}" : slug.ToString();
     }
 }

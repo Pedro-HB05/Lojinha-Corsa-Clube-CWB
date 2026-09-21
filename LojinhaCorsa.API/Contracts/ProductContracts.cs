@@ -9,6 +9,20 @@ public sealed record ProductRequest(Guid? CategoryId, [Required, MaxLength(180)]
     [Required, MaxLength(200)] string Slug, string? Description,
     [Range(0.01, 9999999999.99, ErrorMessage = "O preço base deve ser no mínimo R$ 0,01.")] decimal BasePrice, bool IsAvailable = true);
 
+public sealed class SimpleProductRequest
+{
+    [Required, MaxLength(180)]
+    public string Name { get; init; } = "";
+
+    public string? Description { get; init; }
+
+    [Range(0.01, 9999999999.99, ErrorMessage = "O preço deve ser no mínimo R$ 0,01.")]
+    public decimal Price { get; init; }
+
+    [Required]
+    public IFormFile? Photo { get; init; }
+}
+
 public sealed record AttributeDefinitionRequest([Required, MaxLength(80)] string Name,
     [Required, MaxLength(80)] string Code, int SortOrder = 0, bool IsRequired = true,
     IReadOnlyList<string>? Values = null);

@@ -333,13 +333,16 @@ export function ProductDetailPage() {
     }
   }, [product])
 
-  const variation = useMemo(
-    () =>
-      product?.variations.find(item =>
-        item.attributes.every(attr => selected[attr.attributeDefinitionId] === attr.attributeValueId)
-      ),
-    [product, selected]
-  )
+  const variation = useMemo(() => {
+    if (!product) return undefined
+    if (product.attributes.length === 0) {
+      return product.variations.find(item => item.attributes.length === 0) || product.variations[0]
+    }
+    return product.variations.find(item =>
+      item.attributes.length > 0 &&
+      item.attributes.every(attr => selected[attr.attributeDefinitionId] === attr.attributeValueId)
+    )
+  }, [product, selected])
 
   const activeDiscount = [...(product?.discounts || [])]
     .filter(rule => quantity >= rule.minimumQuantity)
