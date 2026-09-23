@@ -52,11 +52,18 @@ export function RegisterPage() {
   const [form, setForm] = useState({ fullName: '', email: '', phone: '', password: '', confirm: '' })
   const [error, setError] = useState('')
   const navigate = useNavigate()
+  const location = useLocation()
   if (user) return <Navigate to="/" replace />
   async function submit(event: FormEvent) {
     event.preventDefault(); setError('')
     if (form.password !== form.confirm) return setError('As senhas não coincidem.')
-    try { await register(form); navigate('/') } catch (reason) { setError(errorMessage(reason)) }
+    try {
+      await register(form)
+      const from = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname
+      navigate(from || '/', { replace: true })
+    } catch (reason) {
+      setError(errorMessage(reason))
+    }
   }
   const change = (key: keyof typeof form) => (event: React.ChangeEvent<HTMLInputElement>) => setForm({ ...form, [key]: event.target.value })
   return (

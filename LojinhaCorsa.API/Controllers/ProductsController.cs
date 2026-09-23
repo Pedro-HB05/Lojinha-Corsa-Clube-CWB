@@ -353,13 +353,23 @@ public sealed class ProductsController(AppDbContext db, ICurrentUser currentUser
 
         if (!await db.Products.AnyAsync(x => x.Id == productId, ct)) throw new AppException(404, "Produto não encontrado.");
         var stored = await files.SaveProductImageAsync(file, ct);
-        if (isPrimary) await db.ProductPhotos.Where(x => x.ProductId == productId && x.IsPrimary)
-            .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.IsPrimary, false), ct);
-        var photo = new ProductPhoto { Id = Guid.NewGuid(), ProductId = productId, StorageKey = stored.StorageKey,
-            OriginalFileName = stored.OriginalName, MimeType = stored.MimeType, FileSizeBytes = stored.Size,
-            AltText = altText?.Trim(), IsPrimary = isPrimary, CreatedAt = DateTimeOffset.UtcNow, CreatedBy = currentUser.UserId };
-        db.Add(photo); audit.Add("ProductPhoto", photo.Id, "ProductPhotoUploaded", details: new { productId });
-        await db.SaveChangesAsync(ct); return Ok(new { photo.Id });
+        try
+        {
+            if (isPrimary) await db.ProductPhotos.Where(x => x.ProductId == productId && x.IsPrimary)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.IsPrimary, false), ct);
+            var photo = new ProductPhoto { Id = Guid.NewGuid(), ProductId = productId, StorageKey = stored.StorageKey,
+                OriginalFileName = stored.OriginalName, MimeType = stored.MimeType, FileSizeBytes = stored.Size,
+                AltText = altText?.Trim(), IsPrimary = isPrimary, CreatedAt = DateTimeOffset.UtcNow, CreatedBy = currentUser.UserId };
+            db.Add(photo); audit.Add("ProductPhoto", photo.Id, "PhotoUploaded", details: new { productId });
+            await db.SaveChangesAsync(ct);
+            return Ok(new { photo.Id });
+        }
+        catch
+        {
+            var path = files.GetAbsolutePath(stored.StorageKey);
+            if (System.IO.File.Exists(path)) System.IO.File.Delete(path);
+            throw;
+        }
     }
 
     [Authorize(Roles = Roles.Administrator), HttpDelete("admin/product-photos/{id:guid}")]
@@ -368,6 +378,21 @@ public sealed class ProductsController(AppDbContext db, ICurrentUser currentUser
         var photo = await db.ProductPhotos.FindAsync([id], ct) ?? throw new AppException(404, "Foto não encontrada.");
         db.Remove(photo); audit.Add("ProductPhoto", id, "ProductPhotoDeleted", details: new { photo.ProductId });
         await db.SaveChangesAsync(ct);
+
+        // If the deleted photo was primary, promote the next available photo
+        if (photo.IsPrimary)
+        {
+            var nextPhoto = await db.ProductPhotos
+                .Where(x => x.ProductId == photo.ProductId)
+                .OrderBy(x => x.SortOrder)
+                .FirstOrDefaultAsync(ct);
+            if (nextPhoto is not null)
+            {
+                nextPhoto.IsPrimary = true;
+                await db.SaveChangesAsync(ct);
+            }
+        }
+
         var path = files.GetAbsolutePath(photo.StorageKey);
         if (System.IO.File.Exists(path)) System.IO.File.Delete(path);
         return NoContent();
@@ -448,6 +473,7 @@ public sealed class ProductsController(AppDbContext db, ICurrentUser currentUser
             }
         }
 
-        return slug.Length == 0 ? $"produto-{id:N}" : slug.ToString();
+        var baseSlug = slug.Length == 0 ? "produto" : slug.ToString();
+        return $"{baseSlug}-{id.ToString("N")[..6]}";
     }
 }

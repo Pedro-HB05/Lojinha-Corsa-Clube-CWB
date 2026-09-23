@@ -55,9 +55,30 @@ public sealed class AuthService(AppDbContext db, IConfiguration configuration) :
         if (user is null || !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
             throw new AppException(401, "E-mail ou senha inválidos.");
         if (user.StatusCode != "active") throw new AppException(403, "Usuário inativo ou bloqueado.");
-        user.LastLoginAt = DateTimeOffset.UtcNow;
+        
+        var now = DateTimeOffset.UtcNow;
+        user.LastLoginAt = now;
+
+        if (user.Member is null)
+        {
+            var member = new Member { Id = Guid.NewGuid(), UserId = user.Id, CreatedAt = now, UpdatedAt = now };
+            db.Members.Add(member);
+            user.Member = member;
+        }
+
+        var roles = user.UserRoles.Select(x => x.Role.Code).ToList();
+        if (!roles.Contains(Roles.Member))
+        {
+            var memberRole = await db.Roles.SingleOrDefaultAsync(x => x.Code == Roles.Member, ct);
+            if (memberRole is not null)
+            {
+                db.UserRoles.Add(new UserRole { UserId = user.Id, RoleId = memberRole.Id, GrantedAt = now });
+                roles.Add(Roles.Member);
+            }
+        }
+
         await db.SaveChangesAsync(ct);
-        return CreateToken(user, user.Member?.Id, user.UserRoles.Select(x => x.Role.Code).ToArray());
+        return CreateToken(user, user.Member?.Id, roles);
     }
 
     public async Task<AuthResponse> BootstrapAdminAsync(BootstrapAdminRequest request, CancellationToken ct)
@@ -74,16 +95,22 @@ public sealed class AuthService(AppDbContext db, IConfiguration configuration) :
         if (await db.Users.AnyAsync(x => x.Email == email, ct)) throw new AppException(409, "E-mail já cadastrado.");
         var now = DateTimeOffset.UtcNow;
         var role = await db.Roles.SingleAsync(x => x.Code == Roles.Administrator, ct);
+        var memberRole = await db.Roles.SingleAsync(x => x.Code == Roles.Member, ct);
         var user = new User
         {
             Id = Guid.NewGuid(), Email = email, FullName = request.FullName.Trim(),
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password), StatusCode = "active",
             CreatedAt = now, UpdatedAt = now
         };
-        db.Add(user);
+        var member = new Member
+        {
+            Id = Guid.NewGuid(), UserId = user.Id, CreatedAt = now, UpdatedAt = now
+        };
+        db.AddRange(user, member);
         db.Add(new UserRole { UserId = user.Id, RoleId = role.Id, GrantedAt = now });
+        db.Add(new UserRole { UserId = user.Id, RoleId = memberRole.Id, GrantedAt = now });
         await db.SaveChangesAsync(ct);
-        return CreateToken(user, null, [Roles.Administrator]);
+        return CreateToken(user, member.Id, [Roles.Administrator, Roles.Member]);
     }
 
     private AuthResponse CreateToken(User user, Guid? memberId, IReadOnlyList<string> roles)

@@ -34,32 +34,88 @@ public sealed class LocalFileStorage(IWebHostEnvironment environment, IConfigura
         return path;
     }
 
+    private static string NormalizeMimeType(string contentType)
+    {
+        return contentType.ToLowerInvariant().Trim() switch
+        {
+            "image/x-png" => "image/png",
+            "image/pjpeg" => "image/jpeg",
+            "image/jpg" => "image/jpeg",
+            _ => contentType.ToLowerInvariant().Trim()
+        };
+    }
+
+    private static string InferMimeType(IFormFile file)
+    {
+        var contentType = file.ContentType?.Trim();
+        if (!string.IsNullOrEmpty(contentType) && contentType != "application/octet-stream")
+            return NormalizeMimeType(contentType);
+
+        var extension = Path.GetExtension(file.FileName)?.ToLowerInvariant();
+        return extension switch
+        {
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".png" => "image/png",
+            ".webp" => "image/webp",
+            ".pdf" => "application/pdf",
+            _ => contentType ?? ""
+        };
+    }
+
     private async Task<StoredFile> SaveAsync(IFormFile file, string folder, HashSet<string> allowedTypes,
         long maxBytes, CancellationToken ct)
     {
         if (file.Length <= 0)
             throw new Infrastructure.AppException(400, "O arquivo enviado está vazio.");
         if (file.Length > maxBytes)
-            throw new Infrastructure.AppException(400, $"A imagem selecionada excede o limite máximo permitido de {maxBytes / (1024 * 1024)} MB.");
-        if (!allowedTypes.Contains(file.ContentType.ToLowerInvariant()))
-            throw new Infrastructure.AppException(400, "Formato de arquivo não suportado. Por favor, envie uma imagem nos formatos JPG, PNG ou WebP.");
+            throw new Infrastructure.AppException(400, $"O arquivo excede o limite máximo de {maxBytes / (1024 * 1024)} MB.");
 
-        var extension = file.ContentType.ToLowerInvariant() switch
+        var effectiveMime = InferMimeType(file);
+        if (!allowedTypes.Contains(effectiveMime))
+        {
+            var accepted = allowedTypes.Contains("application/pdf")
+                ? "JPG, PNG, WebP ou PDF"
+                : "JPG, PNG ou WebP";
+            throw new Infrastructure.AppException(400, $"Formato de arquivo não suportado. Envie nos formatos: {accepted}.");
+        }
+
+        var extension = effectiveMime switch
         {
             "image/jpeg" => ".jpg",
             "image/png" => ".png",
             "image/webp" => ".webp",
             "application/pdf" => ".pdf",
-            _ => throw new Infrastructure.AppException(400, "Formato de imagem não permitido. Envie JPG, PNG ou WebP.")
+            _ => throw new Infrastructure.AppException(400, "Formato não permitido.")
         };
+
+        // Validate magic bytes before writing to disk
+        await using var input = file.OpenReadStream();
+        var header = new byte[12];
+        var headerLength = await input.ReadAsync(header.AsMemory(0, 12), ct);
+        if (!IsValidSignature(header.AsSpan(0, headerLength), effectiveMime))
+            throw new Infrastructure.AppException(400, "O conteúdo do arquivo não corresponde ao formato informado. Verifique se o arquivo não está corrompido.");
+
+        if (input.CanSeek)
+        {
+            input.Position = 0;
+        }
+
         var storageKey = $"{folder}/{DateTime.UtcNow:yyyy/MM}/{Guid.NewGuid():N}{extension}";
         var absolutePath = GetAbsolutePath(storageKey);
         Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
 
-        await using var input = file.OpenReadStream();
         await using var output = new FileStream(absolutePath, FileMode.CreateNew, FileAccess.Write,
             FileShare.None, 81920, FileOptions.Asynchronous);
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+
+        // If stream couldn't be rewound, write the header bytes already read
+        if (!input.CanSeek)
+        {
+            hash.AppendData(header, 0, headerLength);
+            await output.WriteAsync(header.AsMemory(0, headerLength), ct);
+        }
+
+        // Stream the rest
         var buffer = new byte[81920];
         int read;
         while ((read = await input.ReadAsync(buffer, ct)) > 0)
@@ -68,27 +124,19 @@ public sealed class LocalFileStorage(IWebHostEnvironment environment, IConfigura
             await output.WriteAsync(buffer.AsMemory(0, read), ct);
         }
         await output.FlushAsync(ct);
-        output.Close();
-        if (!HasValidSignature(absolutePath, file.ContentType))
-        {
-            File.Delete(absolutePath);
-            throw new Infrastructure.AppException(400, "O conteúdo do arquivo não corresponde ao tipo informado.");
-        }
-        return new StoredFile(storageKey, Path.GetFileName(file.FileName), file.ContentType,
+
+        return new StoredFile(storageKey, Path.GetFileName(file.FileName), effectiveMime,
             file.Length, Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant());
     }
 
-    private static bool HasValidSignature(string path, string contentType)
+    private static bool IsValidSignature(ReadOnlySpan<byte> header, string contentType)
     {
-        Span<byte> header = stackalloc byte[12];
-        using var stream = File.OpenRead(path);
-        var length = stream.Read(header);
-        return contentType.ToLowerInvariant() switch
+        return contentType switch
         {
-            "image/jpeg" => length >= 3 && header[0] == 0xFF && header[1] == 0xD8 && header[2] == 0xFF,
-            "image/png" => length >= 8 && header[..8].SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }),
-            "image/webp" => length >= 12 && header[..4].SequenceEqual("RIFF"u8) && header[8..12].SequenceEqual("WEBP"u8),
-            "application/pdf" => length >= 5 && header[..5].SequenceEqual("%PDF-"u8),
+            "image/jpeg" => header.Length >= 3 && header[0] == 0xFF && header[1] == 0xD8 && header[2] == 0xFF,
+            "image/png" => header.Length >= 8 && header[..8].SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }),
+            "image/webp" => header.Length >= 12 && header[..4].SequenceEqual("RIFF"u8) && header[8..12].SequenceEqual("WEBP"u8),
+            "application/pdf" => header.Length >= 5 && header[..5].SequenceEqual("%PDF-"u8),
             _ => false
         };
     }

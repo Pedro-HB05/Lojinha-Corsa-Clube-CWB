@@ -133,11 +133,11 @@ export interface OrderDetail extends Omit<OrderSummary, 'itemCount'> {
 }
 
 export interface OrderHistory {
-  id?: string
+  id: number
   statusCode: string
   notes?: string
   createdAt: string
-  changedByName?: string
+  changedBy?: string
 }
 
 export interface PixSettings {
@@ -196,23 +196,16 @@ export interface BatchDetail extends BatchSummary {
 
 export interface DeliveryReady {
   orderId: string
-  orderNumber: string
+  orderNumber: number
   memberName: string
-  totalAmount?: number
-  placedAt?: string
-  itemCount?: number
-}
-
-export interface AuditEntry {
-  id: string
-  entity: string
-  entityId?: string
-  action: string
-  userId?: string
-  userName?: string
-  createdAt: string
-  oldValues?: string
-  newValues?: string
+  totalAmount: number
+  placedAt: string
+  itemCount: number
+  items: Array<{
+    productNameSnapshot: string
+    variationNameSnapshot: string
+    quantity: number
+  }>
 }
 
 export interface CartItem {

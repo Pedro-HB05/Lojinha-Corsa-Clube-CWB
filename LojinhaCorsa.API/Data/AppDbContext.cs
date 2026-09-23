@@ -67,8 +67,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         modelBuilder.Entity<OrderItem>().Property(x => x.Subtotal).HasComputedColumnSql("quantity * unit_price", stored: true);
         modelBuilder.Entity<OrderItem>().Property(x => x.VariationAttributesSnapshot).HasColumnType("jsonb");
         modelBuilder.Entity<PaymentReceipt>().ToTable("payment_receipts");
-        modelBuilder.Entity<OrderStatusHistory>().ToTable("order_status_history").Property(x => x.Id).ValueGeneratedOnAdd();
-        modelBuilder.Entity<PaymentReceiptStatusHistory>().ToTable("payment_receipt_status_history").Property(x => x.Id).ValueGeneratedOnAdd();
+        modelBuilder.Entity<OrderStatusHistory>().ToTable("order_status_history")
+            .HasOne<Order>().WithMany().HasForeignKey(x => x.OrderId);
+        modelBuilder.Entity<OrderStatusHistory>().Property(x => x.Id).ValueGeneratedOnAdd();
+        modelBuilder.Entity<PaymentReceiptStatusHistory>().ToTable("payment_receipt_status_history")
+            .HasOne<PaymentReceipt>().WithMany().HasForeignKey(x => x.PaymentReceiptId);
+        modelBuilder.Entity<PaymentReceiptStatusHistory>().Property(x => x.Id).ValueGeneratedOnAdd();
         modelBuilder.Entity<Batch>().ToTable("batches").HasOne(x => x.Product).WithMany().HasForeignKey(x => x.ProductId);
         modelBuilder.Entity<Batch>().Property(x => x.BatchNumber).ValueGeneratedOnAdd();
         modelBuilder.Entity<BatchOrder>().ToTable("batch_orders").HasOne(x => x.Batch).WithMany(x => x.Orders).HasForeignKey(x => x.BatchId);
@@ -77,7 +81,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         modelBuilder.Entity<BatchOrder>().HasMany(x => x.Items).WithOne().HasForeignKey(x => x.BatchOrderId);
         modelBuilder.Entity<BatchConsolidatedItem>().ToTable("batch_consolidated_items").Property(x => x.VariationAttributesSnapshot).HasColumnType("jsonb");
         modelBuilder.Entity<Batch>().HasMany(x => x.ConsolidatedItems).WithOne().HasForeignKey(x => x.BatchId);
-        modelBuilder.Entity<BatchStatusHistory>().ToTable("batch_status_history").Property(x => x.Id).ValueGeneratedOnAdd();
+        modelBuilder.Entity<BatchStatusHistory>().ToTable("batch_status_history")
+            .HasOne<Batch>().WithMany().HasForeignKey(x => x.BatchId);
+        modelBuilder.Entity<BatchStatusHistory>().Property(x => x.Id).ValueGeneratedOnAdd();
         modelBuilder.Entity<Delivery>().ToTable("deliveries");
         modelBuilder.Entity<AuditLog>().ToTable("audit_logs").Property(x => x.Id).ValueGeneratedOnAdd();
         modelBuilder.Entity<AuditLog>().Property(x => x.Details).HasColumnType("jsonb");

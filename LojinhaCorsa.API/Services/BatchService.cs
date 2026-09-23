@@ -47,8 +47,10 @@ public sealed class BatchService(AppDbContext db, ICurrentUser currentUser, IAud
         });
         audit.Add("Batch", batchId, "OrderAddedToBatch", details: new { orderId });
         audit.Add("Order", orderId, "OrderIncludedInBatch", previous, order.StatusCode, new { batchId });
-        await db.SaveChangesAsync(ct);
-        await RebuildConsolidationAsync(batch, ct);
+        batch.TotalQuantity = await db.BatchOrderItems
+            .Where(item => db.BatchOrders.Any(link => link.Id == item.BatchOrderId && link.BatchId == batch.Id))
+            .SumAsync(x => x.Quantity, ct);
+        batch.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
     }
 
@@ -77,8 +79,10 @@ public sealed class BatchService(AppDbContext db, ICurrentUser currentUser, IAud
             });
         }
         audit.Add("Batch", batchId, "OrderRemovedFromBatch", details: new { orderId });
-        await db.SaveChangesAsync(ct);
-        await RebuildConsolidationAsync(batch, ct);
+        batch.TotalQuantity = await db.BatchOrderItems
+            .Where(item => db.BatchOrders.Any(l => l.Id == item.BatchOrderId && l.BatchId == batch.Id))
+            .SumAsync(x => x.Quantity, ct);
+        batch.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
     }
 
@@ -87,7 +91,7 @@ public sealed class BatchService(AppDbContext db, ICurrentUser currentUser, IAud
         var valid = new[] { BatchStatuses.Closed, BatchStatuses.SentToProduction, BatchStatuses.InProduction,
             BatchStatuses.ProductionCompleted, BatchStatuses.Received, BatchStatuses.Cancelled };
         if (!valid.Contains(status)) throw new AppException(400, "Status de lote inválido.");
-        var batch = await db.Batches.Include(x => x.Orders).SingleOrDefaultAsync(x => x.Id == batchId, ct)
+        var batch = await db.Batches.Include(x => x.Orders).ThenInclude(o => o.Items).SingleOrDefaultAsync(x => x.Id == batchId, ct)
             ?? throw new AppException(404, "Lote não encontrado.");
         var allowed = (batch.StatusCode, status) switch
         {
@@ -160,35 +164,11 @@ public sealed class BatchService(AppDbContext db, ICurrentUser currentUser, IAud
         }
         if (status == BatchStatuses.Cancelled && batch.Orders.Count != 0)
         {
+            foreach (var order in batch.Orders)
+                db.BatchOrderItems.RemoveRange(order.Items);
             db.BatchOrders.RemoveRange(batch.Orders);
-            await db.BatchConsolidatedItems.Where(x => x.BatchId == batchId).ExecuteDeleteAsync(ct);
             batch.TotalQuantity = 0;
         }
         await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
-    }
-
-    private async Task RebuildConsolidationAsync(Batch batch, CancellationToken ct)
-    {
-        var items = await db.BatchOrderItems.AsNoTracking()
-            .Where(item => db.BatchOrders.Any(link => link.Id == item.BatchOrderId && link.BatchId == batch.Id))
-            .ToListAsync(ct);
-
-        await db.BatchConsolidatedItems.Where(x => x.BatchId == batch.Id).ExecuteDeleteAsync(ct);
-        batch.TotalQuantity = items.Sum(x => x.Quantity);
-        batch.UpdatedAt = DateTimeOffset.UtcNow;
-
-        foreach (var group in items.GroupBy(x => x.VariationId))
-        {
-            var sample = group.First();
-            db.BatchConsolidatedItems.Add(new BatchConsolidatedItem
-            {
-                Id = Guid.NewGuid(), BatchId = batch.Id, VariationId = group.Key,
-                Quantity = group.Sum(x => x.Quantity), ProductNameSnapshot = sample.ProductNameSnapshot,
-                VariationNameSnapshot = sample.VariationNameSnapshot,
-                VariationAttributesSnapshot = System.Text.Json.JsonDocument.Parse(
-                    sample.VariationAttributesSnapshot.RootElement.GetRawText()),
-                CreatedAt = DateTimeOffset.UtcNow
-            });
-        }
     }
 }

@@ -13,7 +13,7 @@ namespace LojinhaCorsa.API.Controllers;
 public sealed class OrdersController(AppDbContext db, IOrderService service, IPaymentService payments,
     IFileStorage files) : ControllerBase
 {
-    [Authorize(Roles = Roles.Member), HttpPost]
+    [HttpPost]
     public async Task<IActionResult> Create(CreateOrderRequest request, CancellationToken ct)
     {
         var order = await service.CreateAsync(request, ct);
@@ -67,7 +67,7 @@ public sealed class OrdersController(AppDbContext db, IOrderService service, IPa
             }).ToListAsync(ct));
     }
 
-    [Authorize(Roles = Roles.Member), HttpPost("{id:guid}/receipts")]
+    [HttpPost("{id:guid}/receipts")]
     [RequestSizeLimit(10_485_760)]
     public async Task<IActionResult> SubmitReceipt(Guid id, IFormFile file, [FromForm] decimal? reportedAmount, CancellationToken ct)
     {

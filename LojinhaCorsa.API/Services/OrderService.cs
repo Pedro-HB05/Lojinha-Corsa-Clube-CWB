@@ -49,10 +49,14 @@ public sealed class OrderService(AppDbContext db, ICurrentUser currentUser, IAud
         var now = DateTimeOffset.UtcNow;
         var previousStatus = order.StatusCode;
 
-        var batchOrders = await db.BatchOrders.Where(x => x.OrderId == id).ToListAsync(ct);
+        var batchOrders = await db.BatchOrders
+            .Include(x => x.Items)
+            .Where(x => x.OrderId == id).ToListAsync(ct);
         var affectedBatchIds = batchOrders.Select(x => x.BatchId).Distinct().ToArray();
         if (batchOrders.Count != 0)
         {
+            foreach (var bo in batchOrders)
+                db.BatchOrderItems.RemoveRange(bo.Items);
             db.BatchOrders.RemoveRange(batchOrders);
         }
 
@@ -75,7 +79,13 @@ public sealed class OrderService(AppDbContext db, ICurrentUser currentUser, IAud
 
         await db.SaveChangesAsync(ct);
         foreach (var batchId in affectedBatchIds)
-            await RebuildBatchAsync(batchId, ct);
+        {
+            var b = await db.Batches.SingleAsync(x => x.Id == batchId, ct);
+            b.TotalQuantity = await db.BatchOrderItems
+                .Where(item => db.BatchOrders.Any(link => link.Id == item.BatchOrderId && link.BatchId == batchId))
+                .SumAsync(x => x.Quantity, ct);
+            b.UpdatedAt = DateTimeOffset.UtcNow;
+        }
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
         return order;
@@ -86,7 +96,25 @@ public sealed class OrderService(AppDbContext db, ICurrentUser currentUser, IAud
         if (request.Items.Count == 0) throw new AppException(400, "O pedido precisa ter pelo menos um item.");
         if (request.Items.Select(x => x.VariationId).Distinct().Count() != request.Items.Count)
             throw new AppException(400, "Agrupe quantidades da mesma variação em um único item.");
-        var memberId = currentUser.MemberId ?? throw new AppException(403, "Usuário não possui perfil de membro.");
+        var memberId = currentUser.MemberId;
+        if (!memberId.HasValue)
+        {
+            var member = await db.Members.SingleOrDefaultAsync(x => x.UserId == currentUser.UserId, ct);
+            if (member is null)
+            {
+                var nowTs = DateTimeOffset.UtcNow;
+                member = new Member
+                {
+                    Id = Guid.NewGuid(),
+                    UserId = currentUser.UserId,
+                    CreatedAt = nowTs,
+                    UpdatedAt = nowTs
+                };
+                db.Members.Add(member);
+                await db.SaveChangesAsync(ct);
+            }
+            memberId = member.Id;
+        }
         var ids = request.Items.Select(x => x.VariationId).ToArray();
         var variations = await db.ProductVariations.Include(x => x.Product).ThenInclude(x => x.QuantityDiscounts)
             .Include(x => x.AttributeValues)
@@ -96,7 +124,7 @@ public sealed class OrderService(AppDbContext db, ICurrentUser currentUser, IAud
 
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         var now = DateTimeOffset.UtcNow;
-        var order = new Order { Id = Guid.NewGuid(), MemberId = memberId, StatusCode = OrderStatuses.AwaitingPayment,
+        var order = new Order { Id = Guid.NewGuid(), MemberId = memberId.Value, StatusCode = OrderStatuses.AwaitingPayment,
             Notes = request.Notes?.Trim(), PlacedAt = now, CreatedAt = now, UpdatedAt = now,
             CreatedBy = currentUser.UserId, UpdatedBy = currentUser.UserId };
         var quantitiesByProduct = request.Items
@@ -108,7 +136,10 @@ public sealed class OrderService(AppDbContext db, ICurrentUser currentUser, IAud
         foreach (var requested in request.Items)
         {
             var variation = variations.Single(x => x.Id == requested.VariationId);
-            var attributes = variation.AttributeValues.ToDictionary(x => x.AttributeDefinitionId.ToString(), x => x.AttributeValue.Value);
+            var attributes = variation.AttributeValues
+                .Where(x => x.AttributeValue != null)
+                .DistinctBy(x => x.AttributeDefinitionId)
+                .ToDictionary(x => x.AttributeDefinitionId.ToString(), x => x.AttributeValue.Value);
             var productQuantity = quantitiesByProduct[variation.ProductId];
             var discountPerUnit = variation.Product.QuantityDiscounts
                 .Where(x => productQuantity >= x.MinimumQuantity)
@@ -124,6 +155,7 @@ public sealed class OrderService(AppDbContext db, ICurrentUser currentUser, IAud
                 UpdatedAt = now, CreatedBy = currentUser.UserId });
         }
         order.TotalAmount = order.Items.Sum(x => x.Quantity * x.UnitPrice);
+        db.Add(order);
         db.OrderStatusHistory.Add(new OrderStatusHistory
         {
             OrderId = order.Id,
@@ -132,7 +164,7 @@ public sealed class OrderService(AppDbContext db, ICurrentUser currentUser, IAud
             ChangedBy = currentUser.UserId,
             ChangedAt = now
         });
-        db.Add(order); audit.Add("Order", order.Id, "OrderCreated", newStatus: OrderStatuses.AwaitingPayment,
+        audit.Add("Order", order.Id, "OrderCreated", newStatus: OrderStatuses.AwaitingPayment,
             details: new { DiscountTotal = request.Items.Sum(requested =>
             {
                 var variation = variations.Single(x => x.Id == requested.VariationId);
@@ -142,33 +174,6 @@ public sealed class OrderService(AppDbContext db, ICurrentUser currentUser, IAud
             }) });
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
-        await db.Entry(order).ReloadAsync(ct);
         return order;
-    }
-
-    private async Task RebuildBatchAsync(Guid batchId, CancellationToken ct)
-    {
-        var batch = await db.Batches.SingleAsync(x => x.Id == batchId, ct);
-        var items = await db.BatchOrderItems.AsNoTracking()
-            .Where(item => db.BatchOrders.Any(link => link.Id == item.BatchOrderId && link.BatchId == batchId))
-            .ToListAsync(ct);
-
-        await db.BatchConsolidatedItems.Where(x => x.BatchId == batchId).ExecuteDeleteAsync(ct);
-        batch.TotalQuantity = items.Sum(x => x.Quantity);
-        batch.UpdatedAt = DateTimeOffset.UtcNow;
-
-        foreach (var group in items.GroupBy(x => x.VariationId))
-        {
-            var sample = group.First();
-            db.BatchConsolidatedItems.Add(new BatchConsolidatedItem
-            {
-                Id = Guid.NewGuid(), BatchId = batchId, VariationId = group.Key,
-                Quantity = group.Sum(x => x.Quantity), ProductNameSnapshot = sample.ProductNameSnapshot,
-                VariationNameSnapshot = sample.VariationNameSnapshot,
-                VariationAttributesSnapshot = JsonDocument.Parse(
-                    sample.VariationAttributesSnapshot.RootElement.GetRawText()),
-                CreatedAt = DateTimeOffset.UtcNow
-            });
-        }
     }
 }

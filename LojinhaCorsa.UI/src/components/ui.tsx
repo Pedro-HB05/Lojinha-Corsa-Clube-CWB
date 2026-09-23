@@ -1,5 +1,5 @@
 import { AlertTriangle, ChevronLeft, ChevronRight, Inbox, LoaderCircle, Moon, PackageOpen, Sun, X } from 'lucide-react'
-import { useState, type ReactNode } from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
 import { useTheme } from '../contexts/ThemeContext'
 import { assetUrl } from '../services/api'
 import { labelStatus, statusTone } from '../utils/format'
@@ -32,10 +32,6 @@ export function Modal({ title, children, onClose, wide = false }: { title: strin
   return <div className="modal-backdrop" onMouseDown={event => event.target === event.currentTarget && onClose()}><section className={`modal ${wide ? 'modal-wide' : ''}`} role="dialog" aria-modal="true"><header><h2>{title}</h2><button className="icon-btn" onClick={onClose} aria-label="Fechar"><X /></button></header>{children}</section></div>
 }
 
-export function ConfirmModal({ title, message, confirmLabel = 'Confirmar', danger = false, onConfirm, onClose }: { title: string; message: string; confirmLabel?: string; danger?: boolean; onConfirm(): void; onClose(): void }) {
-  return <Modal title={title} onClose={onClose}><p>{message}</p><div className="modal-actions"><button className="btn btn-ghost" onClick={onClose}>Cancelar</button><button className={`btn ${danger ? 'btn-danger' : 'btn-primary'}`} onClick={onConfirm}>{confirmLabel}</button></div></Modal>
-}
-
 export function Pagination({ page, totalPages, onChange }: { page: number; totalPages: number; onChange(page: number): void }) {
   if (totalPages <= 1) return null
   return <div className="pagination"><button disabled={page <= 1} onClick={() => onChange(page - 1)}><ChevronLeft size={17} /> Anterior</button><span>Página <b>{page}</b> de {totalPages}</span><button disabled={page >= totalPages} onClick={() => onChange(page + 1)}>Próxima <ChevronRight size={17} /></button></div>
@@ -43,6 +39,7 @@ export function Pagination({ page, totalPages, onChange }: { page: number; total
 
 export function ProductImage({ photoId, alt, className = '' }: { photoId?: string; alt: string; className?: string }) {
   const [hasError, setHasError] = useState(false)
+  useEffect(() => { setHasError(false) }, [photoId])
   if (!photoId || hasError) {
     return (
       <div className={`image-placeholder ${className}`}>

@@ -49,7 +49,6 @@ function ProductCard({ product }: { product: ProductSummary }) {
         )}
       </div>
       <div className="product-card-body">
-        <span className="product-category">Vestuário & Colecionáveis</span>
         <h3>{product.name}</h3>
         <p>{product.description || 'Produto oficial confeccionado em lote para os associados do Clube do Corsa CWB.'}</p>
         <div className="product-footer-row">
@@ -334,14 +333,15 @@ export function ProductDetailPage() {
   }, [product])
 
   const variation = useMemo(() => {
-    if (!product) return undefined
+    if (!product || !product.variations?.length) return undefined
     if (product.attributes.length === 0) {
-      return product.variations.find(item => item.attributes.length === 0) || product.variations[0]
+      return product.variations.find(item => !item.attributes || item.attributes.length === 0) || product.variations[0]
     }
-    return product.variations.find(item =>
-      item.attributes.length > 0 &&
+    const matched = product.variations.find(item =>
+      item.attributes && item.attributes.length > 0 &&
       item.attributes.every(attr => selected[attr.attributeDefinitionId] === attr.attributeValueId)
     )
+    return matched || product.variations[0]
   }, [product, selected])
 
   const activeDiscount = [...(product?.discounts || [])]
@@ -940,11 +940,10 @@ export function OrderDetailPage() {
                     <span className="timeline-dot" />
                     <div>
                       <b style={{ color: 'var(--text-main)' }}>
-                        {labelStatus((item as any).newStatusCode || item.statusCode)}
+                        {labelStatus(item.statusCode)}
                       </b>
                       <small>
-                        {dateTime((item as any).changedAt || item.createdAt)}
-                        {item.changedByName ? ` • ${item.changedByName}` : ''}
+                        {dateTime(item.createdAt)}
                       </small>
                       {item.notes && <p>{item.notes}</p>}
                     </div>
@@ -990,6 +989,12 @@ export function OrderDetailPage() {
                     </p>
                   )}
                 </>
+              ) : pix.error ? (
+                <div className="alert alert-warning" style={{ margin: '12px 0' }}>
+                  {pix.error.includes('404') || pix.error.includes('encontrado')
+                    ? 'Nenhuma chave Pix configurada no momento. Entre em contato com a diretoria.'
+                    : pix.error}
+                </div>
               ) : (
                 <Loading label="Carregando dados Pix..." />
               )}

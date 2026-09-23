@@ -25,8 +25,8 @@ public sealed class ExceptionHandlingMiddleware(RequestDelegate next, ILogger<Ex
         catch (DbUpdateException ex)
         {
             logger.LogWarning(ex, "Falha de integridade ao persistir dados.");
-            await WriteProblem(context, StatusCodes.Status409Conflict,
-                "A operação viola uma regra de integridade ou utiliza dados duplicados.");
+            var detail = ParseDbError(ex);
+            await WriteProblem(context, detail.status, detail.message);
         }
         catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
         {
@@ -42,9 +42,34 @@ public sealed class ExceptionHandlingMiddleware(RequestDelegate next, ILogger<Ex
         catch (Exception ex)
         {
             logger.LogError(ex, "Erro não tratado. TraceId: {TraceId}", context.TraceIdentifier);
-            await WriteProblem(context, StatusCodes.Status500InternalServerError,
-                "Ocorreu um erro interno. Informe o identificador da requisição ao suporte.");
+            var detail = ex.InnerException != null ? $"{ex.Message} ({ex.InnerException.Message})" : ex.Message;
+            await WriteProblem(context, StatusCodes.Status500InternalServerError, detail);
         }
+    }
+
+    private static (int status, string message) ParseDbError(DbUpdateException ex)
+    {
+        if (ex.InnerException is Npgsql.PostgresException pg)
+        {
+            return pg.SqlState switch
+            {
+                "23505" => (StatusCodes.Status409Conflict, pg.ConstraintName switch
+                {
+                    "products_slug_key" => "Já existe um produto com este identificador (slug). Tente um nome diferente.",
+                    var c when c?.Contains("email") == true => "Já existe um cadastro com este e-mail.",
+                    var c when c?.Contains("slug") == true => "Já existe um registro com este identificador. Tente um nome diferente.",
+                    _ => $"Registro duplicado: já existe um registro com estes dados ({pg.ConstraintName})."
+                }),
+                "23503" => (StatusCodes.Status400BadRequest,
+                    "Não foi possível completar a operação porque há registros relacionados que dependem deste dado."),
+                "23514" => (StatusCodes.Status400BadRequest,
+                    "Os dados informados não atendem às regras de validação do sistema."),
+                _ => (StatusCodes.Status409Conflict,
+                    "A operação viola uma regra de integridade do banco de dados.")
+            };
+        }
+        return (StatusCodes.Status409Conflict,
+            "A operação viola uma regra de integridade ou utiliza dados duplicados.");
     }
 
     private static async Task WriteProblem(HttpContext context, int statusCode, string detail)
