@@ -15,10 +15,35 @@ public sealed class LocalFileStorage(IWebHostEnvironment environment, IConfigura
 {
     private static readonly HashSet<string> ImageTypes = ["image/jpeg", "image/png", "image/webp"];
     private static readonly HashSet<string> ReceiptTypes = [.. ImageTypes, "application/pdf"];
-    private readonly string _root = Path.GetFullPath(Path.Combine(environment.ContentRootPath,
-        configuration["Uploads:RootPath"] ?? "uploads"));
+    private readonly string _root = ResolveUploadsRoot(environment, configuration);
     private readonly long _maxReceipt = configuration.GetValue("Uploads:MaxReceiptBytes", 10_485_760L);
     private readonly long _maxImage = configuration.GetValue("Uploads:MaxProductImageBytes", 5_242_880L);
+
+    private static string ResolveUploadsRoot(IWebHostEnvironment environment, IConfiguration configuration)
+    {
+        var configured = configuration["Uploads:RootPath"];
+        string path;
+        if (!string.IsNullOrWhiteSpace(configured) && Path.IsPathRooted(configured))
+        {
+            path = Path.GetFullPath(configured);
+        }
+        else
+        {
+            path = Path.GetFullPath(Path.Combine(environment.ContentRootPath, configured ?? "uploads"));
+        }
+
+        try
+        {
+            Directory.CreateDirectory(path);
+            return path;
+        }
+        catch
+        {
+            var fallback = Path.Combine(Path.GetTempPath(), "lojinha_uploads");
+            Directory.CreateDirectory(fallback);
+            return fallback;
+        }
+    }
 
     public Task<StoredFile> SaveReceiptAsync(IFormFile file, CancellationToken ct) =>
         SaveAsync(file, "receipts", ReceiptTypes, _maxReceipt, ct);
