@@ -340,8 +340,11 @@ export function ProductDetailPage() {
       return product.variations.find(item => !item.attributes || item.attributes.length === 0) || product.variations[0]
     }
     const matched = product.variations.find(item =>
-      item.attributes && item.attributes.length > 0 &&
-      item.attributes.every(attr => selected[attr.attributeDefinitionId] === attr.attributeValueId)
+      item.attributes &&
+      item.attributes.length > 0 &&
+      product.attributes.every(attr =>
+        item.attributes.some(a => a.attributeDefinitionId === attr.id && a.attributeValueId === selected[attr.id])
+      )
     )
     return matched || product.variations[0]
   }, [product, selected])
@@ -369,6 +372,30 @@ export function ProductDetailPage() {
     })
     notify('Produto adicionado ao seu carrinho!')
     if (goToCart) navigate('/carrinho')
+  }
+
+  const colorHexMap: Record<string, string> = {
+    PRETA: '#111827',
+    PRETO: '#111827',
+    BRANCA: '#f8fafc',
+    BRANCO: '#f8fafc',
+    CINZA: '#94a3b8',
+    'CINZA MESCLA': '#9ca3af',
+    GRAFITE: '#374151',
+    'AZUL MARINHO': '#1e3a8a',
+    AZUL: '#2563eb',
+    VERMELHA: '#dc2626',
+    VERMELHO: '#dc2626',
+    'BORDÔ': '#7f1d1d',
+    BORDO: '#7f1d1d',
+    VERDE: '#16a34a',
+    AMARELA: '#eab308',
+    AMARELO: '#eab308',
+    BEGE: '#d6c7b2',
+    ROSA: '#ec4899',
+    LARANJA: '#ea580c',
+    ROXA: '#7c3aed',
+    ROXO: '#7c3aed'
   }
 
   return (
@@ -424,6 +451,9 @@ export function ProductDetailPage() {
 
           {/* Seletores de Atributos / Variações */}
           {product.attributes.map(attribute => {
+            const isColorAttr =
+              attribute.code.toLowerCase() === 'cor' || attribute.name.toLowerCase() === 'cor'
+
             const getValuePrice = (valId: string) => {
               const found = product.variations.find(v =>
                 v.attributes?.some(a => a.attributeDefinitionId === attribute.id && a.attributeValueId === valId)
@@ -433,38 +463,44 @@ export function ProductDetailPage() {
 
             // Agrupa tamanhos com o mesmo preço mantendo a ordem cadastrada
             const priceGroups: Array<{ price: number; values: typeof attribute.values }> = []
-            for (const val of attribute.values) {
-              const p = getValuePrice(val.id)
-              const existing = priceGroups.find(g => Math.abs(g.price - p) < 0.001)
-              if (existing) {
-                existing.values.push(val)
-              } else {
-                priceGroups.push({ price: p, values: [val] })
+            if (!isColorAttr) {
+              for (const val of attribute.values) {
+                const p = getValuePrice(val.id)
+                const existing = priceGroups.find(g => Math.abs(g.price - p) < 0.001)
+                if (existing) {
+                  existing.values.push(val)
+                } else {
+                  priceGroups.push({ price: p, values: [val] })
+                }
               }
             }
 
-            const hasMultiplePrices = priceGroups.length > 1
+            const hasMultiplePrices = !isColorAttr && priceGroups.length > 1
 
             const renderButtons = (vals: typeof attribute.values) => (
               <div className="option-list">
-                {vals.map(value => (
-                  <button
-                    type="button"
-                    className={selected[attribute.id] === value.id ? 'selected' : ''}
-                    key={value.id}
-                    disabled={!value.isActive}
-                    onClick={() => setSelected({ ...selected, [attribute.id]: value.id })}
-                  >
-                    {selected[attribute.id] === value.id && <Check size={16} />}
-                    {value.value}
-                  </button>
-                ))}
+                {vals.map(value => {
+                  const swatchHex = isColorAttr ? colorHexMap[value.value.trim().toUpperCase()] : undefined
+                  return (
+                    <button
+                      type="button"
+                      className={selected[attribute.id] === value.id ? 'selected' : ''}
+                      key={value.id}
+                      disabled={!value.isActive}
+                      onClick={() => setSelected({ ...selected, [attribute.id]: value.id })}
+                    >
+                      {selected[attribute.id] === value.id && <Check size={16} />}
+                      {swatchHex && <span className="color-swatch-dot" style={{ backgroundColor: swatchHex }} />}
+                      {value.value}
+                    </button>
+                  )
+                })}
               </div>
             )
 
             return (
               <div className="option-group" key={attribute.id}>
-                <label>Escolha o {attribute.name}:</label>
+                <label>{isColorAttr ? 'Escolha a Cor:' : `Escolha o ${attribute.name}:`}</label>
                 {hasMultiplePrices ? (
                   <div className="store-size-groups">
                     {priceGroups.map((group, idx) => {

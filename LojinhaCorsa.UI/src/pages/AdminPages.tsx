@@ -1,11 +1,11 @@
-import { AlertCircle, Check, ChevronRight, Eye, Gauge, Package, Pencil, Percent, Plus, ReceiptText, RefreshCw, Search, ShoppingBag, Trash2, Truck, UploadCloud, UserPlus, X } from 'lucide-react'
+import { AlertCircle, Check, ChevronRight, Eye, FolderPlus, Gauge, Package, Palette, Pencil, Percent, Plus, ReceiptText, RefreshCw, Search, ShoppingBag, Tag, Trash2, Truck, UploadCloud, UserPlus, X } from 'lucide-react'
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { Empty, ErrorState, Field, Loading, Modal, PageHeader, Pagination, ProductImage, StatusBadge } from '../components/ui'
 import { useToast } from '../contexts/ToastContext'
 import { useApi } from '../hooks/useApi'
 import { api } from '../services/api'
-import type { AdministratorSummary, BatchDetail, BatchSummary, DashboardData, OrderDetail, OrderSummary, PagedResult, PendingPayment, PixSettings, ProductDetail, ProductSummary } from '../types'
+import type { AdministratorSummary, BatchDetail, BatchSummary, Category, DashboardData, OrderDetail, OrderSummary, PagedResult, PendingPayment, PixSettings, ProductDetail, ProductSummary } from '../types'
 import { currency, dateTime, errorMessage, labelStatus } from '../utils/format'
 
 function StatCard({ label, value, icon, tone = '' }: { label: string; value: number | string; icon: React.ReactNode; tone?: string }) {
@@ -21,6 +21,21 @@ export function AdminDashboardPage() {
   return <><PageHeader eyebrow="Visão geral" title="Painel da lojinha" description="Acompanhe o que precisa da sua atenção hoje." /><div className="stats-grid"><StatCard label="Pedidos totais" value={pick('totalOrders', 'ordersCount')} icon={<Package />} /><StatCard label="Pagamentos pendentes" value={pick('pendingPayments', 'pendingPaymentsCount')} icon={<ReceiptText />} tone="orange" /><StatCard label="Prontos para entrega" value={pick('readyForDelivery', 'readyDeliveriesCount')} icon={<Truck />} tone="green" /><StatCard label="Produtos ativos" value={pick('activeProducts', 'productsCount')} icon={<ShoppingBag />} tone="blue" /></div><div className="admin-grid"><section className="panel"><h2>Acesso rápido</h2><div className="quick-actions"><Link to="/admin/pagamentos"><ReceiptText /><span><b>Analisar pagamentos</b><small>Aprovar ou recusar comprovantes</small></span><ChevronRight /></Link><Link to="/admin/lotes"><Package /><span><b>Gerenciar lotes</b><small>Agrupar pedidos para produção</small></span><ChevronRight /></Link><Link to="/admin/entregas"><Truck /><span><b>Registrar entregas</b><small>Pedidos prontos para retirada</small></span><ChevronRight /></Link></div></section><section className="panel dashboard-note"><Gauge /><h2>Operação centralizada</h2><p>Use o menu lateral para gerenciar todo o fluxo da loja, desde o catálogo até a entrega ao associado.</p></section></div></>
 }
 
+const SUGGESTED_COLORS: Array<{ name: string; hex: string }> = [
+  { name: 'Preta', hex: '#111827' },
+  { name: 'Branca', hex: '#f8fafc' },
+  { name: 'Cinza', hex: '#94a3b8' },
+  { name: 'Grafite', hex: '#374151' },
+  { name: 'Azul Marinho', hex: '#1e3a8a' },
+  { name: 'Azul', hex: '#2563eb' },
+  { name: 'Vermelha', hex: '#dc2626' },
+  { name: 'Bordô', hex: '#7f1d1d' },
+  { name: 'Verde', hex: '#16a34a' },
+  { name: 'Amarela', hex: '#eab308' },
+  { name: 'Bege', hex: '#d6c7b2' },
+  { name: 'Rosa', hex: '#ec4899' }
+]
+
 interface SizePriceRow {
   sizesText: string
   price: string
@@ -30,13 +45,15 @@ interface SizePricingState {
   mode: 'sized' | 'single'
   singlePrice: string
   rows: SizePriceRow[]
+  colorsText: string
 }
 
 function createInitialSizePricingState(defaultPrice = ''): SizePricingState {
   return {
     mode: 'sized',
     singlePrice: defaultPrice,
-    rows: [{ sizesText: '', price: defaultPrice }]
+    rows: [{ sizesText: '', price: defaultPrice }],
+    colorsText: ''
   }
 }
 
@@ -66,12 +83,55 @@ function extractSizesFromInput(raw: string): string[] {
   return result
 }
 
+function extractColorsFromInput(raw: string): string[] {
+  const trimmed = raw.trim()
+  if (!trimmed) return []
+  const parts = trimmed.split(/[,;/\n]+/)
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const part of parts) {
+    const clean = part.trim()
+    if (!clean) continue
+    const key = clean.toUpperCase()
+    if (!seen.has(key)) {
+      seen.add(key)
+      result.push(clean)
+    }
+  }
+  return result
+}
+
 function parseProductToSizePricingState(product: ProductDetail): SizePricingState {
   const baseStr = String(product.basePrice || '')
   const orderedSizes: Array<{ size: string; price: number }> = []
-  const seen = new Set<string>()
+  const seenSizes = new Set<string>()
+  const orderedColors: string[] = []
+  const seenColors = new Set<string>()
 
-  const sizeAttr = product.attributes?.[0]
+  const sizeAttr =
+    product.attributes?.find(
+      a => a.code.toLowerCase() === 'tamanho' || a.name.toLowerCase() === 'tamanho'
+    ) ||
+    product.attributes?.find(
+      a => a.code.toLowerCase() !== 'cor' && a.name.toLowerCase() !== 'cor'
+    )
+
+  const colorAttr = product.attributes?.find(
+    a => a.code.toLowerCase() === 'cor' || a.name.toLowerCase() === 'cor'
+  )
+
+  if (colorAttr && colorAttr.values?.length) {
+    for (const val of colorAttr.values) {
+      if (!val.isActive) continue
+      const clean = val.value.trim()
+      const key = clean.toUpperCase()
+      if (clean && !seenColors.has(key)) {
+        seenColors.add(key)
+        orderedColors.push(clean)
+      }
+    }
+  }
+
   if (sizeAttr && sizeAttr.values?.length) {
     for (const val of sizeAttr.values) {
       if (!val.isActive) continue
@@ -82,43 +142,24 @@ function parseProductToSizePricingState(product: ProductDetail): SizePricingStat
       )
       const price = matchedVar ? matchedVar.price : product.basePrice
       const key = val.value.trim().toUpperCase()
-      if (key && !seen.has(key)) {
-        seen.add(key)
+      if (key && !seenSizes.has(key)) {
+        seenSizes.add(key)
         orderedSizes.push({ size: val.value.trim(), price })
       }
     }
   }
 
-  if (orderedSizes.length === 0) {
-    for (const v of product.variations || []) {
-      if (v.isAvailable === false) continue
-      const attrVal = v.attributes?.[0]?.value?.trim()
-      if (attrVal) {
-        const key = attrVal.toUpperCase()
-        if (!seen.has(key)) {
-          seen.add(key)
-          orderedSizes.push({ size: attrVal, price: v.price })
-        }
-      } else if (v.displayName && v.displayName.toLowerCase() !== 'padrão') {
-        const cleaned = v.displayName.replace(/^tamanho\s+/i, '').trim()
-        const key = cleaned.toUpperCase()
-        if (cleaned && !seen.has(key)) {
-          seen.add(key)
-          orderedSizes.push({ size: cleaned, price: v.price })
-        }
-      }
-    }
-  }
+  const colorsText = orderedColors.join(', ')
 
   if (orderedSizes.length === 0) {
     return {
       mode: 'single',
       singlePrice: baseStr,
-      rows: [{ sizesText: '', price: baseStr }]
+      rows: [{ sizesText: '', price: baseStr }],
+      colorsText
     }
   }
 
-  // Agrupa tamanhos que têm o mesmo preço em linhas para facilitar a edição
   const groups: Array<{ price: number; sizes: string[] }> = []
   for (const item of orderedSizes) {
     const existingGroup = groups.find(g => Math.abs(g.price - item.price) < 0.001)
@@ -135,21 +176,25 @@ function parseProductToSizePricingState(product: ProductDetail): SizePricingStat
     rows: groups.map(g => ({
       sizesText: g.sizes.join(', '),
       price: String(g.price)
-    }))
+    })),
+    colorsText
   }
 }
 
 function buildSizesPayload(state: SizePricingState): {
   basePrice: number
   sizes: Array<{ size: string; price: number }>
+  colors: string[]
   error?: string
 } {
+  const colors = extractColorsFromInput(state.colorsText)
+
   if (state.mode === 'single') {
     const p = Number(state.singlePrice)
     if (isNaN(p) || p <= 0) {
-      return { basePrice: 0, sizes: [], error: 'Informe um preço válido maior que zero (mínimo R$ 0,01).' }
+      return { basePrice: 0, sizes: [], colors, error: 'Informe um preço válido maior que zero (mínimo R$ 0,01).' }
     }
-    return { basePrice: p, sizes: [] }
+    return { basePrice: p, sizes: [], colors }
   }
 
   const sizes: Array<{ size: string; price: number }> = []
@@ -167,6 +212,7 @@ function buildSizesPayload(state: SizePricingState): {
       return {
         basePrice: 0,
         sizes: [],
+        colors,
         error: `Digite pelo menos um tamanho na faixa #${i + 1} ou remova a linha.`
       }
     }
@@ -175,6 +221,7 @@ function buildSizesPayload(state: SizePricingState): {
       return {
         basePrice: 0,
         sizes: [],
+        colors,
         error: `Informe um preço válido maior que zero para os tamanhos (${parsedSizes.join(', ')}).`
       }
     }
@@ -185,6 +232,7 @@ function buildSizesPayload(state: SizePricingState): {
         return {
           basePrice: 0,
           sizes: [],
+          colors,
           error: `O tamanho "${s}" foi informado mais de uma vez. Cada tamanho deve aparecer apenas uma vez.`
         }
       }
@@ -197,12 +245,13 @@ function buildSizesPayload(state: SizePricingState): {
     return {
       basePrice: 0,
       sizes: [],
+      colors,
       error: 'Informe pelo menos um tamanho e seu preço, ou mude para "Tamanho único".'
     }
   }
 
   const basePrice = Math.min(...sizes.map(s => s.price))
-  return { basePrice, sizes }
+  return { basePrice, sizes, colors }
 }
 
 function SizePricingEditor({
@@ -239,6 +288,21 @@ function SizePricingEditor({
     const currentSizes = extractSizesFromInput(value.rows[rowIndex].sizesText)
     const remaining = currentSizes.filter(s => s.toUpperCase() !== sizeToRemove.toUpperCase())
     updateRow(rowIndex, { sizesText: remaining.join(', ') })
+  }
+
+  const parsedColors = extractColorsFromInput(value.colorsText)
+
+  const toggleSuggestedColor = (colorName: string) => {
+    const exists = parsedColors.some(c => c.toUpperCase() === colorName.toUpperCase())
+    const nextColors = exists
+      ? parsedColors.filter(c => c.toUpperCase() !== colorName.toUpperCase())
+      : [...parsedColors, colorName]
+    onChange({ ...value, colorsText: nextColors.join(', ') })
+  }
+
+  const removeColor = (colorToRemove: string) => {
+    const nextColors = parsedColors.filter(c => c.toUpperCase() !== colorToRemove.toUpperCase())
+    onChange({ ...value, colorsText: nextColors.join(', ') })
   }
 
   return (
@@ -359,26 +423,345 @@ function SizePricingEditor({
           </div>
         </div>
       )}
+
+      {/* Seção de Cores do Produto */}
+      <div className="product-colors-box">
+        <div className="product-colors-header">
+          <div>
+            <b><Palette size={16} /> Cores disponíveis (opcional)</b>
+            <small>Clique nas cores abaixo para marcar/desmarcar ou digite qualquer cor separada por vírgula.</small>
+          </div>
+        </div>
+
+        <div className="color-suggestions-row">
+          {SUGGESTED_COLORS.map(color => {
+            const isSelected = parsedColors.some(c => c.toUpperCase() === color.name.toUpperCase())
+            return (
+              <button
+                key={color.name}
+                type="button"
+                className={`color-chip-btn ${isSelected ? 'selected' : ''}`}
+                onClick={() => toggleSuggestedColor(color.name)}
+              >
+                <span className="color-swatch-dot" style={{ backgroundColor: color.hex }} />
+                <span>{color.name}</span>
+                {isSelected && <Check size={13} />}
+              </button>
+            )
+          })}
+        </div>
+
+        <Field label="Ou digite as cores (separadas por vírgula)">
+          <input
+            type="text"
+            value={value.colorsText}
+            onChange={e => onChange({ ...value, colorsText: e.target.value })}
+            placeholder="Ex.: Preta, Branca, Cinza Mescla (deixe em branco se não houver escolha de cor)"
+          />
+        </Field>
+
+        {parsedColors.length > 0 && (
+          <div className="size-row-preview">
+            <small>Cores selecionadas ({parsedColors.length}):</small>
+            <div className="size-pills-row">
+              {parsedColors.map(color => (
+                <span key={color} className="size-pill-tag">
+                  <b>{color}</b>
+                  <button
+                    type="button"
+                    onClick={() => removeColor(color)}
+                    title={`Remover cor ${color}`}
+                  >
+                    <X size={12} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
+  )
+}
+
+function CategorySelectField({
+  value,
+  onChange,
+  categories,
+  onReloadCategories
+}: {
+  value: string
+  onChange: (categoryId: string) => void
+  categories: Category[]
+  onReloadCategories: () => Promise<void> | void
+}) {
+  const notify = useToast()
+  const [creating, setCreating] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  async function handleQuickCreate() {
+    const trimmed = newName.trim()
+    if (!trimmed) {
+      notify('Digite o nome da categoria.', 'error')
+      return
+    }
+    setSaving(true)
+    try {
+      const created = await api.post<{ id: string; name: string }>('/admin/categories', {
+        name: trimmed,
+        isActive: true
+      })
+      notify(`Categoria "${trimmed}" criada!`)
+      setNewName('')
+      setCreating(false)
+      await onReloadCategories()
+      if (created?.id) {
+        onChange(created.id)
+      }
+    } catch (error) {
+      notify(errorMessage(error), 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="category-field-wrap">
+      <div className="category-field-top">
+        <label className="category-field-label">Categoria</label>
+        <button
+          type="button"
+          className="btn-link-xs"
+          onClick={() => setCreating(prev => !prev)}
+        >
+          {creating ? 'Cancelar nova categoria' : '+ Criar nova categoria'}
+        </button>
+      </div>
+
+      {creating ? (
+        <div className="quick-category-box">
+          <input
+            type="text"
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            placeholder="Nome da nova categoria (ex.: Camisetas, Adesivos, Bonés)"
+            onKeyDown={e => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                handleQuickCreate()
+              }
+            }}
+          />
+          <button
+            type="button"
+            className="btn btn-primary btn-small"
+            disabled={saving}
+            onClick={handleQuickCreate}
+          >
+            {saving ? 'Criando...' : 'Salvar categoria'}
+          </button>
+        </div>
+      ) : (
+        <select value={value} onChange={e => onChange(e.target.value)}>
+          <option value="">Sem categoria definida</option>
+          {categories.map(cat => (
+            <option key={cat.id} value={cat.id}>
+              {cat.name}
+            </option>
+          ))}
+        </select>
+      )}
+    </div>
+  )
+}
+
+function CategoryManagerModal({
+  onClose,
+  onChanged
+}: {
+  onClose: () => void
+  onChanged: () => void
+}) {
+  const notify = useToast()
+  const categories = useApi(() => api.get<Category[]>('/admin/categories'), [])
+  const [newName, setNewName] = useState('')
+  const [newDescription, setNewDescription] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editDescription, setEditDescription] = useState('')
+
+  async function handleCreate(e: FormEvent) {
+    e.preventDefault()
+    if (!newName.trim()) return
+    setSaving(true)
+    try {
+      await api.post('/admin/categories', {
+        name: newName.trim(),
+        description: newDescription.trim() || null,
+        isActive: true
+      })
+      notify('Categoria cadastrada com sucesso!')
+      setNewName('')
+      setNewDescription('')
+      await categories.reload()
+      onChanged()
+    } catch (error) {
+      notify(errorMessage(error), 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function startEdit(cat: Category) {
+    setEditingId(cat.id)
+    setEditName(cat.name)
+    setEditDescription(cat.description || '')
+  }
+
+  async function saveEdit(cat: Category) {
+    if (!editName.trim()) {
+      notify('O nome da categoria não pode ficar vazio.', 'error')
+      return
+    }
+    try {
+      await api.put(`/admin/categories/${cat.id}`, {
+        name: editName.trim(),
+        description: editDescription.trim() || null,
+        isActive: cat.isActive !== false
+      })
+      notify('Categoria atualizada!')
+      setEditingId(null)
+      await categories.reload()
+      onChanged()
+    } catch (error) {
+      notify(errorMessage(error), 'error')
+    }
+  }
+
+  async function deleteCategory(cat: Category) {
+    if (!confirm(`Deseja excluir a categoria "${cat.name}"? Os produtos vinculados continuarão cadastrados normalmente.`)) return
+    try {
+      await api.delete(`/admin/categories/${cat.id}`)
+      notify('Categoria removida!')
+      await categories.reload()
+      onChanged()
+    } catch (error) {
+      notify(errorMessage(error), 'error')
+    }
+  }
+
+  return (
+    <Modal title="Gerenciar Categorias" onClose={onClose} wide>
+      <div className="stack-form">
+        <form onSubmit={handleCreate} className="category-create-card">
+          <b><FolderPlus size={16} /> Nova categoria</b>
+          <div className="category-create-row">
+            <Field label="Nome da categoria *">
+              <input
+                required
+                value={newName}
+                onChange={e => setNewName(e.target.value)}
+                placeholder="Ex.: Camisetas, Moletons, Adesivos, Chaveiros..."
+              />
+            </Field>
+            <Field label="Descrição (opcional)">
+              <input
+                value={newDescription}
+                onChange={e => setNewDescription(e.target.value)}
+                placeholder="Ex.: Linha de vestuário oficial"
+              />
+            </Field>
+            <button className="btn btn-primary" disabled={saving}>
+              <Plus size={16} /> {saving ? 'Adicionando...' : 'Adicionar'}
+            </button>
+          </div>
+        </form>
+
+        {categories.loading ? (
+          <Loading />
+        ) : categories.error ? (
+          <ErrorState message={categories.error} retry={categories.reload} />
+        ) : !categories.data?.length ? (
+          <Empty
+            title="Nenhuma categoria cadastrada"
+            description="Adicione sua primeira categoria acima para organizar os produtos da loja."
+          />
+        ) : (
+          <div className="category-list">
+            {categories.data.map(cat => (
+              <div key={cat.id} className="category-list-item">
+                {editingId === cat.id ? (
+                  <div className="category-edit-inline">
+                    <input
+                      value={editName}
+                      onChange={e => setEditName(e.target.value)}
+                      placeholder="Nome da categoria"
+                    />
+                    <input
+                      value={editDescription}
+                      onChange={e => setEditDescription(e.target.value)}
+                      placeholder="Descrição (opcional)"
+                    />
+                    <button type="button" className="btn btn-primary btn-small" onClick={() => saveEdit(cat)}>
+                      Salvar
+                    </button>
+                    <button type="button" className="btn btn-ghost btn-small" onClick={() => setEditingId(null)}>
+                      Cancelar
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="category-item-info">
+                      <div>
+                        <b>{cat.name}</b>
+                        <span className="badge">{cat.productCount ?? 0} produto(s)</span>
+                      </div>
+                      {cat.description && <small>{cat.description}</small>}
+                    </div>
+                    <div className="table-actions">
+                      <button type="button" title="Editar categoria" onClick={() => startEdit(cat)}>
+                        <Pencil size={16} />
+                      </button>
+                      <button type="button" className="danger" title="Excluir categoria" onClick={() => deleteCategory(cat)}>
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Modal>
   )
 }
 
 export function AdminProductsPage() {
   const notify = useToast()
   const [active, setActive] = useState('')
+  const [categoryFilter, setCategoryFilter] = useState('')
   const [search, setSearch] = useState('')
   const [manageId, setManageId] = useState<string>()
+  const [isManagingCategories, setIsManagingCategories] = useState(false)
 
   // Criação de novo produto
   const [isCreating, setIsCreating] = useState(false)
-  const [newProduct, setNewProduct] = useState({ name: '', description: '' })
+  const [newProduct, setNewProduct] = useState({ name: '', description: '', categoryId: '' })
   const [newSizePricing, setNewSizePricing] = useState<SizePricingState>(() => createInitialSizePricingState())
   const [newPhotos, setNewPhotos] = useState<Array<{ file: File; preview: string }>>([])
   const [newPhotoError, setNewPhotoError] = useState('')
   const [savingNew, setSavingNew] = useState(false)
 
+  const categories = useApi(() => api.get<Category[]>('/admin/categories'), [])
   const products = useApi(() => api.get<ProductSummary[]>(`/admin/products?active=${active}`), [active])
-  const filtered = (products.data || []).filter(product => product.name.toLowerCase().includes(search.toLowerCase()))
+  const filtered = (products.data || []).filter(product => {
+    const matchesSearch = product.name.toLowerCase().includes(search.toLowerCase())
+    const matchesCategory = !categoryFilter || product.categoryId === categoryFilter
+    return matchesSearch && matchesCategory
+  })
 
   function isValidImageFile(file: File): boolean {
     const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/x-png', 'image/pjpeg', 'image/jpg']
@@ -450,7 +833,7 @@ export function AdminProductsPage() {
 
   function openCreate() {
     clearNewPhotos()
-    setNewProduct({ name: '', description: '' })
+    setNewProduct({ name: '', description: '', categoryId: '' })
     setNewSizePricing(createInitialSizePricingState())
     setNewPhotoError('')
     setIsCreating(true)
@@ -474,9 +857,15 @@ export function AdminProductsPage() {
       const form = new FormData()
       form.append('name', newProduct.name.trim())
       form.append('description', newProduct.description.trim())
+      if (newProduct.categoryId) {
+        form.append('categoryId', newProduct.categoryId)
+      }
       form.append('price', String(built.basePrice))
       if (built.sizes.length > 0) {
         form.append('sizesJson', JSON.stringify(built.sizes))
+      }
+      if (built.colors.length > 0) {
+        form.append('colorsJson', JSON.stringify(built.colors))
       }
       newPhotos.forEach(item => form.append('photos', item.file))
       await api.upload<{ id: string }>('/admin/products/simple', form)
@@ -484,6 +873,7 @@ export function AdminProductsPage() {
       setIsCreating(false)
       clearNewPhotos()
       await products.reload()
+      await categories.reload()
     } catch (error) {
       notify(errorMessage(error), 'error')
     } finally {
@@ -507,6 +897,7 @@ export function AdminProductsPage() {
       await api.delete(`/admin/products/${product.id}`)
       notify('Produto excluído com sucesso.')
       await products.reload()
+      await categories.reload()
     } catch (error) {
       notify(errorMessage(error), 'error')
     }
@@ -517,8 +908,17 @@ export function AdminProductsPage() {
       <PageHeader
         eyebrow="Catálogo"
         title="Produtos"
-        description="Preencha os dados básicos, defina os preços por faixa de tamanho e salve."
-        actions={<button className="btn btn-primary" onClick={openCreate}><Plus /> Novo produto</button>}
+        description="Gerencie categorias, produtos, tamanhos, cores e preços."
+        actions={
+          <div className="header-actions">
+            <button className="btn btn-secondary" onClick={() => setIsManagingCategories(true)}>
+              <Tag size={16} /> Categorias
+            </button>
+            <button className="btn btn-primary" onClick={openCreate}>
+              <Plus size={16} /> Novo produto
+            </button>
+          </div>
+        }
       />
       <div className="admin-toolbar">
         <div className="search-box">
@@ -529,6 +929,14 @@ export function AdminProductsPage() {
             placeholder="Buscar por nome..."
           />
         </div>
+        <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}>
+          <option value="">Todas as categorias</option>
+          {(categories.data || []).map(cat => (
+            <option key={cat.id} value={cat.id}>
+              {cat.name}
+            </option>
+          ))}
+        </select>
         <select value={active} onChange={e => setActive(e.target.value)}>
           <option value="">Todos</option>
           <option value="true">Disponíveis</option>
@@ -551,6 +959,7 @@ export function AdminProductsPage() {
             <thead>
               <tr>
                 <th>Produto</th>
+                <th>Categoria</th>
                 <th>Preço base</th>
                 <th>Disponibilidade</th>
                 <th>Ações</th>
@@ -569,6 +978,13 @@ export function AdminProductsPage() {
                     </div>
                   </td>
                   <td>
+                    {product.categoryName ? (
+                      <span className="badge">{product.categoryName}</span>
+                    ) : (
+                      <small style={{ color: 'var(--text-muted)' }}>Sem categoria</small>
+                    )}
+                  </td>
+                  <td>
                     <b>{currency(product.basePrice)}</b>
                   </td>
                   <td>
@@ -583,7 +999,7 @@ export function AdminProductsPage() {
                   <td>
                     <div className="table-actions">
                       <button
-                        title="Editar produto e tamanhos"
+                        title="Editar produto, tamanhos e cores"
                         onClick={() => setManageId(product.id)}
                       >
                         <Pencil />
@@ -604,6 +1020,16 @@ export function AdminProductsPage() {
         </div>
       )}
 
+      {isManagingCategories && (
+        <CategoryManagerModal
+          onClose={() => setIsManagingCategories(false)}
+          onChanged={() => {
+            categories.reload()
+            products.reload()
+          }}
+        />
+      )}
+
       {isCreating && (
         <Modal
           title="Novo produto"
@@ -612,7 +1038,7 @@ export function AdminProductsPage() {
         >
           <form onSubmit={handleCreateProduct}>
             <div className="product-modal-banner">
-              Preencha os dados, configure os preços por faixa de tamanho (Infantil 02 a 10, P ao GG e G1 ao G4) e anexe as fotos do produto.
+              Preencha os dados, escolha ou crie a categoria, informe os tamanhos, cores e preços e anexe as fotos do produto.
             </div>
 
             <div className="form-grid">
@@ -624,6 +1050,13 @@ export function AdminProductsPage() {
                   placeholder="Ex.: Camiseta Oficial Corsa Clube"
                 />
               </Field>
+
+              <CategorySelectField
+                value={newProduct.categoryId}
+                onChange={categoryId => setNewProduct({ ...newProduct, categoryId })}
+                categories={categories.data || []}
+                onReloadCategories={categories.reload}
+              />
 
               <Field label="Descrição">
                 <textarea
@@ -735,7 +1168,16 @@ export function AdminProductsPage() {
         </Modal>
       )}
 
-      {manageId && <ProductManager productId={manageId} onClose={() => { setManageId(undefined); products.reload() }} />}
+      {manageId && (
+        <ProductManager
+          productId={manageId}
+          onClose={() => {
+            setManageId(undefined)
+            products.reload()
+            categories.reload()
+          }}
+        />
+      )}
     </>
   )
 }
@@ -743,10 +1185,17 @@ export function AdminProductsPage() {
 function ProductManager({ productId, onClose }: { productId: string; onClose(): void }) {
   const notify = useToast()
   const product = useApi(() => api.get<ProductDetail>(`/products/${productId}`), [productId])
+  const categories = useApi(() => api.get<Category[]>('/admin/categories'), [])
   const [tab, setTab] = useState<'general' | 'sizes' | 'photos' | 'discounts'>('general')
 
   // Estado da aba Dados Gerais
-  const [generalForm, setGeneralForm] = useState({ name: '', basePrice: '', description: '', isAvailable: true })
+  const [generalForm, setGeneralForm] = useState({
+    name: '',
+    basePrice: '',
+    description: '',
+    categoryId: '',
+    isAvailable: true
+  })
   const [mainPhoto, setMainPhoto] = useState<File | null>(null)
   const [mainPhotoPreview, setMainPhotoPreview] = useState('')
   const [mainPhotoError, setMainPhotoError] = useState('')
@@ -771,6 +1220,7 @@ function ProductManager({ productId, onClose }: { productId: string; onClose(): 
         name: product.data.name,
         basePrice: String(product.data.basePrice),
         description: product.data.description || '',
+        categoryId: product.data.categoryId || '',
         isAvailable: product.data.isAvailable !== false
       })
       setSizePricing(parseProductToSizePricingState(product.data))
@@ -827,7 +1277,7 @@ function ProductManager({ productId, onClose }: { productId: string; onClose(): 
     setSavingGeneral(true)
     try {
       await api.put(`/admin/products/${productId}`, {
-        categoryId: product.data.categoryId || null,
+        categoryId: generalForm.categoryId || null,
         name: generalForm.name.trim(),
         slug: product.data.slug,
         description: generalForm.description.trim(),
@@ -836,7 +1286,8 @@ function ProductManager({ productId, onClose }: { productId: string; onClose(): 
       })
       await api.put(`/admin/products/${productId}/sizes`, {
         basePrice: built.basePrice,
-        sizes: built.sizes
+        sizes: built.sizes,
+        colors: built.colors
       })
       if (mainPhoto) {
         const form = new FormData()
@@ -847,7 +1298,7 @@ function ProductManager({ productId, onClose }: { productId: string; onClose(): 
         setMainPhoto(null)
         setMainPhotoPreview('')
       }
-      notify('Produto e tamanhos atualizados com sucesso!')
+      notify('Produto, categoria, tamanhos e cores atualizados com sucesso!')
       await product.reload()
     } catch (error) {
       notify(errorMessage(error), 'error')
@@ -867,9 +1318,10 @@ function ProductManager({ productId, onClose }: { productId: string; onClose(): 
     try {
       await api.put(`/admin/products/${productId}/sizes`, {
         basePrice: built.basePrice,
-        sizes: built.sizes
+        sizes: built.sizes,
+        colors: built.colors
       })
-      notify('Tamanhos e preços salvos com sucesso!')
+      notify('Tamanhos, cores e preços salvos com sucesso!')
       await product.reload()
     } catch (error) {
       notify(errorMessage(error), 'error')
@@ -994,14 +1446,14 @@ function ProductManager({ productId, onClose }: { productId: string; onClose(): 
               className={tab === 'general' ? 'active' : ''}
               onClick={() => setTab('general')}
             >
-              Dados Gerais e Tamanhos
+              Dados Gerais, Tamanhos e Cores
             </button>
             <button
               type="button"
               className={tab === 'sizes' ? 'active' : ''}
               onClick={() => setTab('sizes')}
             >
-              Tamanhos e Preços ({activeSizesCount || 'Único'})
+              Tamanhos, Cores e Preços ({activeSizesCount || 'Único'})
             </button>
             <button
               type="button"
@@ -1030,6 +1482,13 @@ function ProductManager({ productId, onClose }: { productId: string; onClose(): 
                     placeholder="Ex.: Camiseta Oficial Corsa Clube"
                   />
                 </Field>
+
+                <CategorySelectField
+                  value={generalForm.categoryId}
+                  onChange={categoryId => setGeneralForm({ ...generalForm, categoryId })}
+                  categories={categories.data || []}
+                  onReloadCategories={categories.reload}
+                />
 
                 <Field label="Disponibilidade">
                   <select
@@ -1111,7 +1570,7 @@ function ProductManager({ productId, onClose }: { productId: string; onClose(): 
 
               <div className="modal-actions">
                 <button className="btn btn-primary" type="submit" disabled={savingGeneral}>
-                  <Check /> {savingGeneral ? 'Salvando...' : 'Salvar produto e tamanhos'}
+                  <Check /> {savingGeneral ? 'Salvando...' : 'Salvar alterações'}
                 </button>
               </div>
             </form>
@@ -1122,7 +1581,7 @@ function ProductManager({ productId, onClose }: { productId: string; onClose(): 
               <SizePricingEditor value={sizePricing} onChange={setSizePricing} />
               <div className="modal-actions">
                 <button className="btn btn-primary" type="submit" disabled={savingSizes}>
-                  <Check /> {savingSizes ? 'Salvando...' : 'Salvar tamanhos e preços'}
+                  <Check /> {savingSizes ? 'Salvando...' : 'Salvar tamanhos, cores e preços'}
                 </button>
               </div>
             </form>

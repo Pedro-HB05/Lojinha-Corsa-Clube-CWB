@@ -16,6 +16,7 @@ export interface Category {
   slug: string
   description?: string
   isActive?: boolean
+  productCount?: number
 }
 
 export interface ProductPhoto {
@@ -66,6 +67,7 @@ export interface ProductSummary {
   description: string
   basePrice: number
   categoryId: string | null
+  categoryName?: string | null
   isAvailable?: boolean
   photo?: ProductPhoto | null
   discounts: QuantityDiscount[]
