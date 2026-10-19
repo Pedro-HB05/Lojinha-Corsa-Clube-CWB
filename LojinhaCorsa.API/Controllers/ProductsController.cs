@@ -43,7 +43,7 @@ public sealed class ProductsController(AppDbContext db, ICurrentUser currentUser
                 Discounts = x.QuantityDiscounts.OrderBy(d => d.MinimumQuantity)
                     .Select(d => new { d.Id, d.MinimumQuantity, d.DiscountPerUnit }),
                 Category = x.Category == null ? null : new { x.Category.Id, x.Category.Name },
-                Photos = x.Photos.OrderBy(p => p.SortOrder).Select(p => new { p.Id, p.AltText, p.IsPrimary, p.SortOrder }),
+                Photos = x.Photos.OrderByDescending(p => p.IsPrimary).ThenBy(p => p.SortOrder).ThenBy(p => p.CreatedAt).Select(p => new { p.Id, p.AltText, p.IsPrimary, p.SortOrder }),
                 Attributes = x.AttributeDefinitions.OrderBy(a => a.SortOrder).Select(a => new
                 {
                     a.Id, a.Name, a.Code, a.IsRequired,
@@ -94,21 +94,27 @@ public sealed class ProductsController(AppDbContext db, ICurrentUser currentUser
 
     [Authorize(Roles = Roles.Administrator), HttpPost("admin/products/simple")]
     [Consumes("multipart/form-data")]
-    [RequestSizeLimit(6_291_456)]
+    [RequestSizeLimit(52_428_800)]
     public async Task<IActionResult> CreateSimpleProduct([FromForm] SimpleProductRequest request, CancellationToken ct)
     {
         if (request.Price <= 0)
             throw new AppException(400, "O preço deve ser maior que zero.");
-        if (request.Photo is null || request.Photo.Length == 0)
-            throw new AppException(400, "Selecione uma foto do produto.");
+
+        var uploadedFiles = new List<IFormFile>();
+        if (request.Photos is { Count: > 0 })
+            uploadedFiles.AddRange(request.Photos.Where(f => f is { Length: > 0 }));
+        if (request.Photo is { Length: > 0 } && !uploadedFiles.Contains(request.Photo))
+            uploadedFiles.Insert(0, request.Photo);
+
+        if (uploadedFiles.Count == 0)
+            throw new AppException(400, "Selecione pelo menos uma foto do produto.");
 
         var now = DateTimeOffset.UtcNow;
         var productId = Guid.NewGuid();
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
-        StoredFile? stored = null;
+        var storedFiles = new List<StoredFile>();
         try
         {
-            stored = await files.SaveProductImageAsync(request.Photo, ct);
             var product = new Product
             {
                 Id = productId,
@@ -123,22 +129,30 @@ public sealed class ProductsController(AppDbContext db, ICurrentUser currentUser
                 UpdatedBy = currentUser.UserId
             };
             var variation = CreateDefaultVariation(productId, now);
-            var photo = new ProductPhoto
-            {
-                Id = Guid.NewGuid(),
-                ProductId = productId,
-                StorageKey = stored.StorageKey,
-                OriginalFileName = stored.OriginalName,
-                MimeType = stored.MimeType,
-                FileSizeBytes = stored.Size,
-                AltText = product.Name,
-                IsPrimary = true,
-                CreatedAt = now,
-                CreatedBy = currentUser.UserId
-            };
+            db.AddRange(product, variation);
 
-            db.AddRange(product, variation, photo);
-            audit.Add("Product", productId, "ProductCreated", details: new { SimpleRegistration = true });
+            for (var i = 0; i < uploadedFiles.Count; i++)
+            {
+                var stored = await files.SaveProductImageAsync(uploadedFiles[i], ct);
+                storedFiles.Add(stored);
+                var photo = new ProductPhoto
+                {
+                    Id = Guid.NewGuid(),
+                    ProductId = productId,
+                    StorageKey = stored.StorageKey,
+                    OriginalFileName = stored.OriginalName,
+                    MimeType = stored.MimeType,
+                    FileSizeBytes = stored.Size,
+                    AltText = product.Name,
+                    SortOrder = i,
+                    IsPrimary = i == 0,
+                    CreatedAt = now,
+                    CreatedBy = currentUser.UserId
+                };
+                db.Add(photo);
+            }
+
+            audit.Add("Product", productId, "ProductCreated", details: new { SimpleRegistration = true, PhotoCount = uploadedFiles.Count });
             await db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
             return CreatedAtAction(nameof(GetProduct), new { id = productId }, new { id = productId });
@@ -146,7 +160,7 @@ public sealed class ProductsController(AppDbContext db, ICurrentUser currentUser
         catch
         {
             await transaction.RollbackAsync(ct);
-            if (stored is not null)
+            foreach (var stored in storedFiles)
             {
                 var path = files.GetAbsolutePath(stored.StorageKey);
                 if (System.IO.File.Exists(path)) System.IO.File.Delete(path);
@@ -357,9 +371,11 @@ public sealed class ProductsController(AppDbContext db, ICurrentUser currentUser
         {
             if (isPrimary) await db.ProductPhotos.Where(x => x.ProductId == productId && x.IsPrimary)
                 .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.IsPrimary, false), ct);
+            var maxSort = await db.ProductPhotos.Where(x => x.ProductId == productId)
+                .Select(x => (int?)x.SortOrder).MaxAsync(ct) ?? -1;
             var photo = new ProductPhoto { Id = Guid.NewGuid(), ProductId = productId, StorageKey = stored.StorageKey,
                 OriginalFileName = stored.OriginalName, MimeType = stored.MimeType, FileSizeBytes = stored.Size,
-                AltText = altText?.Trim(), IsPrimary = isPrimary, CreatedAt = DateTimeOffset.UtcNow, CreatedBy = currentUser.UserId };
+                AltText = altText?.Trim(), SortOrder = maxSort + 1, IsPrimary = isPrimary, CreatedAt = DateTimeOffset.UtcNow, CreatedBy = currentUser.UserId };
             db.Add(photo); audit.Add("ProductPhoto", photo.Id, "PhotoUploaded", details: new { productId });
             await db.SaveChangesAsync(ct);
             return Ok(new { photo.Id });

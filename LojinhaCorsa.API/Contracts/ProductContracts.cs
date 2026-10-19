@@ -19,8 +19,9 @@ public sealed class SimpleProductRequest
     [Range(0.01, 9999999999.99, ErrorMessage = "O preço deve ser no mínimo R$ 0,01.")]
     public decimal Price { get; init; }
 
-    [Required]
     public IFormFile? Photo { get; init; }
+
+    public List<IFormFile>? Photos { get; init; }
 }
 
 public sealed record AttributeDefinitionRequest([Required, MaxLength(80)] string Name,
