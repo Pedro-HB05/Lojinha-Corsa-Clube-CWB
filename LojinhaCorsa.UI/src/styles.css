@@ -1756,6 +1756,20 @@ tr:hover td {
   background-color: #ef4444;
 }
 
+.photo-manager-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  background-color: var(--orange);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
 .product-upload-guidelines {
   margin-bottom: 12px;
   color: var(--text-muted);
@@ -1841,10 +1855,30 @@ tr:hover td {
   font-size: 0.8rem;
 }
 
+.product-photos-selected-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.product-photos-selected-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-secondary);
+}
+
+.product-photos-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
 .product-photo-preview-box {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
   padding: 12px;
   background-color: var(--bg-surface);
   border: 1px solid var(--border-line);
@@ -1857,6 +1891,7 @@ tr:hover td {
   object-fit: cover;
   border-radius: 8px;
   border: 1px solid var(--border-line);
+  flex-shrink: 0;
 }
 
 .preview-meta {
@@ -1864,6 +1899,14 @@ tr:hover td {
   flex-direction: column;
   gap: 4px;
   flex: 1;
+  min-width: 0;
+}
+
+.preview-meta-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .preview-meta b {
@@ -1875,6 +1918,14 @@ tr:hover td {
 .preview-meta small {
   font-size: 0.8rem;
   color: var(--text-muted);
+}
+
+.preview-meta-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
 }
 
 .form-error-banner {

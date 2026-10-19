@@ -30,8 +30,7 @@ export function AdminProductsPage() {
   // Criação de novo produto
   const [isCreating, setIsCreating] = useState(false)
   const [newProduct, setNewProduct] = useState({ name: '', basePrice: '', description: '' })
-  const [newPhoto, setNewPhoto] = useState<File | null>(null)
-  const [newPhotoPreview, setNewPhotoPreview] = useState('')
+  const [newPhotos, setNewPhotos] = useState<Array<{ file: File; preview: string }>>([])
   const [newPhotoError, setNewPhotoError] = useState('')
   const [savingNew, setSavingNew] = useState(false)
 
@@ -45,37 +44,70 @@ export function AdminProductsPage() {
     return ['jpg', 'jpeg', 'png', 'webp'].includes(ext)
   }
 
-  function handleNewPhotoSelect(file?: File) {
+  function clearNewPhotos() {
+    newPhotos.forEach(item => URL.revokeObjectURL(item.preview))
+    setNewPhotos([])
+  }
+
+  function handleNewPhotosSelect(fileList: FileList | null) {
     setNewPhotoError('')
-    if (newPhotoPreview) URL.revokeObjectURL(newPhotoPreview)
-    if (!file) {
-      setNewPhoto(null)
-      setNewPhotoPreview('')
-      return
-    }
-    if (!isValidImageFile(file)) {
-      setNewPhotoError('Formato inválido! Envie uma imagem nos formatos JPG, PNG ou WebP.')
-      setNewPhoto(null)
-      setNewPhotoPreview('')
-      return
-    }
+    if (!fileList || fileList.length === 0) return
+
     const MAX_SIZE = 5 * 1024 * 1024
-    if (file.size > MAX_SIZE) {
-      const sizeMb = (file.size / (1024 * 1024)).toFixed(2)
-      setNewPhotoError(`A imagem selecionada possui ${sizeMb} MB e ultrapassa o limite de 5 MB. Escolha uma imagem menor.`)
-      setNewPhoto(null)
-      setNewPhotoPreview('')
-      return
+    const validAdditions: Array<{ file: File; preview: string }> = []
+    const errors: string[] = []
+
+    for (const file of Array.from(fileList)) {
+      if (!isValidImageFile(file)) {
+        errors.push(`"${file.name}": formato inválido (use JPG, PNG ou WebP).`)
+        continue
+      }
+      if (file.size > MAX_SIZE) {
+        const sizeMb = (file.size / (1024 * 1024)).toFixed(2)
+        errors.push(`"${file.name}" possui ${sizeMb} MB e ultrapassa o limite de 5 MB.`)
+        continue
+      }
+      const alreadyAdded = newPhotos.some(
+        existing =>
+          existing.file.name === file.name &&
+          existing.file.size === file.size &&
+          existing.file.lastModified === file.lastModified
+      )
+      if (!alreadyAdded) {
+        validAdditions.push({ file, preview: URL.createObjectURL(file) })
+      }
     }
-    setNewPhoto(file)
-    setNewPhotoPreview(URL.createObjectURL(file))
+
+    if (errors.length > 0) {
+      setNewPhotoError(errors.join(' '))
+    }
+    if (validAdditions.length > 0) {
+      setNewPhotos(prev => [...prev, ...validAdditions])
+    }
+  }
+
+  function removeNewPhoto(index: number) {
+    setNewPhotoError('')
+    setNewPhotos(prev => {
+      const target = prev[index]
+      if (target) URL.revokeObjectURL(target.preview)
+      return prev.filter((_, i) => i !== index)
+    })
+  }
+
+  function setPrimaryNewPhoto(index: number) {
+    if (index <= 0) return
+    setNewPhotos(prev => {
+      const target = prev[index]
+      if (!target) return prev
+      const rest = prev.filter((_, i) => i !== index)
+      return [target, ...rest]
+    })
   }
 
   function openCreate() {
-    if (newPhotoPreview) URL.revokeObjectURL(newPhotoPreview)
+    clearNewPhotos()
     setNewProduct({ name: '', basePrice: '', description: '' })
-    setNewPhoto(null)
-    setNewPhotoPreview('')
     setNewPhotoError('')
     setIsCreating(true)
   }
@@ -87,13 +119,9 @@ export function AdminProductsPage() {
       notify('O preço base deve ser maior que zero (mínimo R$ 0,01).', 'error')
       return
     }
-    if (!newPhoto) {
-      setNewPhotoError('A imagem do produto é obrigatória para cadastro.')
-      notify('Selecione uma imagem principal para cadastrar o produto.', 'error')
-      return
-    }
-    if (newPhotoError) {
-      notify(newPhotoError, 'error')
+    if (newPhotos.length === 0) {
+      setNewPhotoError('Selecione pelo menos uma imagem do produto para cadastro.')
+      notify('Selecione pelo menos uma imagem para cadastrar o produto.', 'error')
       return
     }
 
@@ -103,13 +131,11 @@ export function AdminProductsPage() {
       form.append('name', newProduct.name.trim())
       form.append('description', newProduct.description.trim())
       form.append('price', String(priceNum))
-      form.append('photo', newPhoto)
+      newPhotos.forEach(item => form.append('photos', item.file))
       await api.upload<{ id: string }>('/admin/products/simple', form)
       notify('Produto cadastrado com sucesso!')
       setIsCreating(false)
-      if (newPhotoPreview) URL.revokeObjectURL(newPhotoPreview)
-      setNewPhoto(null)
-      setNewPhotoPreview('')
+      clearNewPhotos()
       await products.reload()
     } catch (error) {
       notify(errorMessage(error), 'error')
@@ -238,7 +264,7 @@ export function AdminProductsPage() {
           wide
         >
           <form onSubmit={handleCreateProduct}>
-            <div className="product-modal-banner">Preencha os dados e anexe a foto de capa. O produto será publicado e poderá ser editado a qualquer momento.</div>
+            <div className="product-modal-banner">Preencha os dados e anexe uma ou mais fotos do produto. A primeira imagem será usada como capa e o produto poderá ser editado a qualquer momento.</div>
 
             <div className="form-grid">
               <Field label="Nome do produto *">
@@ -273,40 +299,79 @@ export function AdminProductsPage() {
               </Field>
             </div>
 
-            {/* Upload de Foto Principal Obrigatória */}
+            {/* Upload de Fotos do Produto */}
             <div className="product-image-section">
               <div className="field-label">
-                <b>Foto principal do produto * (Obrigatória)</b>
-                <small>Formatos aceitos: JPG, PNG, WebP • Tamanho máximo permitido: 5 MB</small>
+                <b>Fotos do produto * (Pelo menos 1 obrigatória)</b>
+                <small>Selecione uma ou mais imagens • Formatos aceitos: JPG, PNG, WebP (máx. 5 MB por foto)</small>
               </div>
 
               <div className="product-upload-box">
                 <input
                   id="product-main-photo-input"
                   type="file"
+                  multiple
                   accept="image/jpeg,image/png,image/webp,image/x-png,image/pjpeg,image/jpg"
                   style={{ display: 'none' }}
-                  onChange={e => handleNewPhotoSelect(e.target.files?.[0])}
+                  onChange={e => {
+                    handleNewPhotosSelect(e.target.files)
+                    e.target.value = ''
+                  }}
                 />
                 <label htmlFor="product-main-photo-input" className="product-upload-trigger">
                   <UploadCloud size={24} />
-                  <span>{newPhoto ? 'Substituir imagem selecionada' : 'Selecionar imagem do produto'}</span>
-                  <small>Clique para escolher uma imagem do seu computador</small>
+                  <span>{newPhotos.length > 0 ? 'Adicionar mais imagens do produto' : 'Selecionar imagens do produto'}</span>
+                  <small>Clique para escolher uma ou várias imagens do seu computador</small>
                 </label>
 
-                {newPhotoPreview && (
-                  <div className="product-photo-preview-box">
-                    <img src={newPhotoPreview} alt="Pré-visualização" className="product-form-preview" />
-                    <div className="preview-meta">
-                      <b>{newPhoto?.name}</b>
-                      <small>{newPhoto ? (newPhoto.size / (1024 * 1024)).toFixed(2) : '0'} MB</small>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm"
-                        onClick={() => handleNewPhotoSelect(undefined)}
-                      >
-                        Remover foto
-                      </button>
+                {newPhotos.length > 0 && (
+                  <div className="product-photos-selected-wrap">
+                    <div className="product-photos-selected-header">
+                      <small>
+                        <b>{newPhotos.length}</b> {newPhotos.length === 1 ? 'imagem selecionada' : 'imagens selecionadas'}
+                      </small>
+                      {newPhotos.length > 1 && (
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-small"
+                          onClick={clearNewPhotos}
+                        >
+                          Remover todas
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="product-photos-preview-grid">
+                      {newPhotos.map((item, index) => (
+                        <div key={`${item.file.name}-${item.file.lastModified}-${index}`} className="product-photo-preview-box">
+                          <img src={item.preview} alt={`Pré-visualização ${index + 1}`} className="product-form-preview" />
+                          <div className="preview-meta">
+                            <div className="preview-meta-top">
+                              <b>{item.file.name}</b>
+                              {index === 0 && <span className="badge badge-warning">Capa principal</span>}
+                            </div>
+                            <small>{(item.file.size / (1024 * 1024)).toFixed(2)} MB</small>
+                            <div className="preview-meta-actions">
+                              {index > 0 && (
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary btn-small"
+                                  onClick={() => setPrimaryNewPhoto(index)}
+                                >
+                                  Definir como capa
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className="btn btn-ghost btn-small"
+                                onClick={() => removeNewPhoto(index)}
+                              >
+                                Remover
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
@@ -350,8 +415,7 @@ function ProductManager({ productId, onClose }: { productId: string; onClose(): 
   const [savingGeneral, setSavingGeneral] = useState(false)
 
   // Estado das outras abas
-  const [file, setFile] = useState<File>()
-  const [filePreview, setFilePreview] = useState('')
+  const [filesToUpload, setFilesToUpload] = useState<Array<{ file: File; preview: string }>>([])
   const [alt, setAlt] = useState('')
   const [uploadError, setUploadError] = useState('')
   const [uploading, setUploading] = useState(false)
@@ -451,49 +515,59 @@ function ProductManager({ productId, onClose }: { productId: string; onClose(): 
     }
   }
 
-  function handleFileSelect(selected?: File) {
+  function handleFileSelect(fileList: FileList | null) {
     setUploadError('')
-    if (filePreview) URL.revokeObjectURL(filePreview)
-    if (!selected) {
-      setFile(undefined)
-      setFilePreview('')
-      return
-    }
-    const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/x-png', 'image/pjpeg', 'image/jpg']
-    const typeOk = selected.type && validTypes.includes(selected.type.toLowerCase())
-    const ext = selected.name.split('.').pop()?.toLowerCase() || ''
-    const extOk = ['jpg', 'jpeg', 'png', 'webp'].includes(ext)
-    if (!typeOk && !extOk) {
-      setUploadError('Formato de imagem não suportado. Por favor envie JPG, PNG ou WebP.')
-      setFile(undefined)
-      setFilePreview('')
-      return
-    }
+    if (!fileList || fileList.length === 0) return
+
     const MAX_SIZE = 5 * 1024 * 1024
-    if (selected.size > MAX_SIZE) {
-      const sizeMb = (selected.size / (1024 * 1024)).toFixed(2)
-      setUploadError(`A imagem possui ${sizeMb} MB e ultrapassa o limite máximo permitido de 5 MB. Selecione uma imagem menor.`)
-      setFile(undefined)
-      setFilePreview('')
-      return
+    const validAdditions: Array<{ file: File; preview: string }> = []
+    const errors: string[] = []
+
+    for (const selected of Array.from(fileList)) {
+      if (!isValidImageFile(selected)) {
+        errors.push(`"${selected.name}": formato não suportado (use JPG, PNG ou WebP).`)
+        continue
+      }
+      if (selected.size > MAX_SIZE) {
+        const sizeMb = (selected.size / (1024 * 1024)).toFixed(2)
+        errors.push(`"${selected.name}" possui ${sizeMb} MB e ultrapassa o limite de 5 MB.`)
+        continue
+      }
+      validAdditions.push({ file: selected, preview: URL.createObjectURL(selected) })
     }
-    setFile(selected)
-    setFilePreview(URL.createObjectURL(selected))
+
+    if (errors.length > 0) {
+      setUploadError(errors.join(' '))
+    }
+    if (validAdditions.length > 0) {
+      setFilesToUpload(prev => [...prev, ...validAdditions])
+    }
+  }
+
+  function removeFileToUpload(index: number) {
+    setFilesToUpload(prev => {
+      const target = prev[index]
+      if (target) URL.revokeObjectURL(target.preview)
+      return prev.filter((_, i) => i !== index)
+    })
   }
 
   async function upload() {
-    if (!file) return notify('Selecione uma imagem para enviar.', 'error')
-    if (uploadError) return notify(uploadError, 'error')
+    if (!filesToUpload.length) return notify('Selecione pelo menos uma imagem para enviar.', 'error')
     setUploading(true)
     try {
-      const form = new FormData()
-      form.append('file', file)
-      form.append('altText', alt)
-      form.append('isPrimary', String(!product.data?.photos.length))
-      await api.upload(`/admin/products/${productId}/photos`, form)
-      notify('Foto enviada com sucesso.')
-      setFile(undefined)
-      setFilePreview('')
+      const hasExistingPhotos = Boolean(product.data?.photos.length)
+      for (let i = 0; i < filesToUpload.length; i++) {
+        const form = new FormData()
+        form.append('file', filesToUpload[i].file)
+        form.append('altText', alt)
+        form.append('isPrimary', String(!hasExistingPhotos && i === 0))
+        await api.upload(`/admin/products/${productId}/photos`, form)
+      }
+      notify(filesToUpload.length > 1 ? 'Fotos enviadas com sucesso.' : 'Foto enviada com sucesso.')
+      filesToUpload.forEach(item => URL.revokeObjectURL(item.preview))
+      setFilesToUpload([])
+      setUploadError('')
       setAlt('')
       await product.reload()
     } catch (error) {
@@ -740,6 +814,7 @@ function ProductManager({ productId, onClose }: { productId: string; onClose(): 
                 {product.data.photos.map(photo => (
                   <div key={photo.id}>
                     <ProductImage photoId={photo.id} alt={photo.altText || product.data!.name} />
+                    {photo.isPrimary && <span className="photo-manager-badge">Capa</span>}
                     <button
                       onClick={() => deletePhoto(photo.id)}
                       title="Excluir foto"
@@ -751,14 +826,18 @@ function ProductManager({ productId, onClose }: { productId: string; onClose(): 
               </div>
 
               <div className="product-upload-guidelines">
-                <small>Formatos aceitos: JPG, PNG, WebP • Limite máximo por imagem: 5 MB</small>
+                <small>Você pode selecionar várias fotos de uma vez • Formatos aceitos: JPG, PNG, WebP (máx. 5 MB por imagem)</small>
               </div>
 
               <div className="inline-form">
                 <input
                   type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  onChange={e => handleFileSelect(e.target.files?.[0])}
+                  multiple
+                  accept="image/jpeg,image/png,image/webp,image/x-png,image/pjpeg,image/jpg"
+                  onChange={e => {
+                    handleFileSelect(e.target.files)
+                    e.target.value = ''
+                  }}
                 />
                 <input
                   value={alt}
@@ -768,19 +847,32 @@ function ProductManager({ productId, onClose }: { productId: string; onClose(): 
                 <button
                   className="btn btn-primary"
                   onClick={upload}
-                  disabled={uploading || !file}
+                  disabled={uploading || !filesToUpload.length}
                 >
-                  <UploadCloud /> {uploading ? 'Enviando...' : 'Enviar foto'}
+                  <UploadCloud /> {uploading ? 'Enviando...' : filesToUpload.length > 1 ? `Enviar ${filesToUpload.length} fotos` : 'Enviar foto'}
                 </button>
               </div>
 
-              {filePreview && (
-                <div className="product-photo-preview-box" style={{ marginTop: '12px' }}>
-                  <img src={filePreview} alt="Preview" className="product-form-preview" />
-                  <div className="preview-meta">
-                    <b>{file?.name}</b>
-                    <small>{file ? (file.size / (1024 * 1024)).toFixed(2) : '0'} MB</small>
-                  </div>
+              {filesToUpload.length > 0 && (
+                <div className="product-photos-preview-grid" style={{ marginTop: '12px' }}>
+                  {filesToUpload.map((item, idx) => (
+                    <div key={`${item.file.name}-${idx}`} className="product-photo-preview-box">
+                      <img src={item.preview} alt="Preview" className="product-form-preview" />
+                      <div className="preview-meta">
+                        <b>{item.file.name}</b>
+                        <small>{(item.file.size / (1024 * 1024)).toFixed(2)} MB</small>
+                        <div className="preview-meta-actions">
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-small"
+                            onClick={() => removeFileToUpload(idx)}
+                          >
+                            Remover
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
 
