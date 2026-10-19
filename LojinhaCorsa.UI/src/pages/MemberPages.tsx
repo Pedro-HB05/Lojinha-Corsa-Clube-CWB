@@ -327,8 +327,7 @@ export function ProductDetailPage() {
       const defaults: Record<string, string> = {}
       product.attributes.forEach(attr => {
         const activeValues = attr.values.filter(v => v.isActive)
-        const preferredAdult = activeValues.find(v => ['P', 'M', 'G', 'GG'].includes(v.value.trim().toUpperCase()))
-        const firstVal = preferredAdult || activeValues[0] || attr.values[0]
+        const firstVal = activeValues[0] || attr.values[0]
         if (firstVal) defaults[attr.id] = firstVal.id
       })
       setSelected(defaults)
@@ -432,27 +431,19 @@ export function ProductDetailPage() {
               return found ? found.price : product.basePrice
             }
 
-            const norm = (val: string) => {
-              const u = val.trim().toUpperCase()
-              if (u === '2') return '02'
-              if (u === '4') return '04'
-              if (u === '6') return '06'
-              if (u === '8') return '08'
-              return u
+            // Agrupa tamanhos com o mesmo preço mantendo a ordem cadastrada
+            const priceGroups: Array<{ price: number; values: typeof attribute.values }> = []
+            for (const val of attribute.values) {
+              const p = getValuePrice(val.id)
+              const existing = priceGroups.find(g => Math.abs(g.price - p) < 0.001)
+              if (existing) {
+                existing.values.push(val)
+              } else {
+                priceGroups.push({ price: p, values: [val] })
+              }
             }
 
-            const kidsSet = new Set(['02', '04', '06', '08', '10'])
-            const adultSet = new Set(['P', 'M', 'G', 'GG'])
-            const plusSet = new Set(['G1', 'G2', 'G3', 'G4'])
-
-            const kidsValues = attribute.values.filter(v => kidsSet.has(norm(v.value)))
-            const adultValues = attribute.values.filter(v => adultSet.has(norm(v.value)))
-            const plusValues = attribute.values.filter(v => plusSet.has(norm(v.value)))
-            const otherValues = attribute.values.filter(
-              v => !kidsSet.has(norm(v.value)) && !adultSet.has(norm(v.value)) && !plusSet.has(norm(v.value))
-            )
-
-            const hasGroupedSizes = kidsValues.length > 0 || adultValues.length > 0 || plusValues.length > 0
+            const hasMultiplePrices = priceGroups.length > 1
 
             const renderButtons = (vals: typeof attribute.values) => (
               <div className="option-list">
@@ -474,43 +465,25 @@ export function ProductDetailPage() {
             return (
               <div className="option-group" key={attribute.id}>
                 <label>Escolha o {attribute.name}:</label>
-                {hasGroupedSizes ? (
+                {hasMultiplePrices ? (
                   <div className="store-size-groups">
-                    {kidsValues.length > 0 && (
-                      <div className="store-size-group-box">
-                        <div className="store-size-group-title">
-                          <span>Infantil (02 ao 10)</span>
-                          <b>{currency(getValuePrice(kidsValues[0].id))}</b>
+                    {priceGroups.map((group, idx) => {
+                      const firstLabel = group.values[0]?.value
+                      const lastLabel = group.values[group.values.length - 1]?.value
+                      const rangeTitle =
+                        group.values.length > 1
+                          ? `Tamanhos ${firstLabel} a ${lastLabel}`
+                          : `Tamanho ${firstLabel}`
+                      return (
+                        <div className="store-size-group-box" key={idx}>
+                          <div className="store-size-group-title">
+                            <span>{rangeTitle}</span>
+                            <b>{currency(group.price)}</b>
+                          </div>
+                          {renderButtons(group.values)}
                         </div>
-                        {renderButtons(kidsValues)}
-                      </div>
-                    )}
-                    {adultValues.length > 0 && (
-                      <div className="store-size-group-box">
-                        <div className="store-size-group-title">
-                          <span>Tradicional (P ao GG)</span>
-                          <b>{currency(getValuePrice(adultValues[0].id))}</b>
-                        </div>
-                        {renderButtons(adultValues)}
-                      </div>
-                    )}
-                    {plusValues.length > 0 && (
-                      <div className="store-size-group-box">
-                        <div className="store-size-group-title">
-                          <span>Plus Size (G1 ao G4)</span>
-                          <b>{currency(getValuePrice(plusValues[0].id))}</b>
-                        </div>
-                        {renderButtons(plusValues)}
-                      </div>
-                    )}
-                    {otherValues.length > 0 && (
-                      <div className="store-size-group-box">
-                        <div className="store-size-group-title">
-                          <span>Outros tamanhos</span>
-                        </div>
-                        {renderButtons(otherValues)}
-                      </div>
-                    )}
+                      )
+                    })}
                   </div>
                 ) : (
                   renderButtons(attribute.values)

@@ -21,110 +21,121 @@ export function AdminDashboardPage() {
   return <><PageHeader eyebrow="Visão geral" title="Painel da lojinha" description="Acompanhe o que precisa da sua atenção hoje." /><div className="stats-grid"><StatCard label="Pedidos totais" value={pick('totalOrders', 'ordersCount')} icon={<Package />} /><StatCard label="Pagamentos pendentes" value={pick('pendingPayments', 'pendingPaymentsCount')} icon={<ReceiptText />} tone="orange" /><StatCard label="Prontos para entrega" value={pick('readyForDelivery', 'readyDeliveriesCount')} icon={<Truck />} tone="green" /><StatCard label="Produtos ativos" value={pick('activeProducts', 'productsCount')} icon={<ShoppingBag />} tone="blue" /></div><div className="admin-grid"><section className="panel"><h2>Acesso rápido</h2><div className="quick-actions"><Link to="/admin/pagamentos"><ReceiptText /><span><b>Analisar pagamentos</b><small>Aprovar ou recusar comprovantes</small></span><ChevronRight /></Link><Link to="/admin/lotes"><Package /><span><b>Gerenciar lotes</b><small>Agrupar pedidos para produção</small></span><ChevronRight /></Link><Link to="/admin/entregas"><Truck /><span><b>Registrar entregas</b><small>Pedidos prontos para retirada</small></span><ChevronRight /></Link></div></section><section className="panel dashboard-note"><Gauge /><h2>Operação centralizada</h2><p>Use o menu lateral para gerenciar todo o fluxo da loja, desde o catálogo até a entrega ao associado.</p></section></div></>
 }
 
-const KIDS_SIZES = ['02', '04', '06', '08', '10'] as const
-const ADULT_SIZES = ['P', 'M', 'G', 'GG'] as const
-const PLUS_SIZES = ['G1', 'G2', 'G3', 'G4'] as const
-
-interface SizeGroupState {
-  enabled: boolean
+interface SizePriceRow {
+  sizesText: string
   price: string
-  sizes: string[]
 }
 
 interface SizePricingState {
   mode: 'sized' | 'single'
   singlePrice: string
-  kids: SizeGroupState
-  adult: SizeGroupState
-  plus: SizeGroupState
-  customSizes: Array<{ size: string; price: string }>
+  rows: SizePriceRow[]
 }
 
 function createInitialSizePricingState(defaultPrice = ''): SizePricingState {
   return {
     mode: 'sized',
     singlePrice: defaultPrice,
-    kids: { enabled: true, price: defaultPrice, sizes: [...KIDS_SIZES] },
-    adult: { enabled: true, price: defaultPrice, sizes: [...ADULT_SIZES] },
-    plus: { enabled: true, price: defaultPrice, sizes: [...PLUS_SIZES] },
-    customSizes: []
+    rows: [{ sizesText: '', price: defaultPrice }]
   }
 }
 
-function normalizeSizeLabel(raw: string): string {
-  const clean = raw.trim().toUpperCase()
-  if (clean === '2') return '02'
-  if (clean === '4') return '04'
-  if (clean === '6') return '06'
-  if (clean === '8') return '08'
-  return clean
+function extractSizesFromInput(raw: string): string[] {
+  const trimmed = raw.trim()
+  if (!trimmed) return []
+
+  let parts: string[]
+  if (/[,;/\n]/.test(trimmed)) {
+    parts = trimmed.split(/[,;/\n]+/)
+  } else {
+    const spaceTokens = trimmed.split(/\s+/)
+    parts = spaceTokens.length > 1 && spaceTokens.every(t => t.length <= 4) ? spaceTokens : [trimmed]
+  }
+
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const part of parts) {
+    const clean = part.trim()
+    if (!clean) continue
+    const key = clean.toUpperCase()
+    if (!seen.has(key)) {
+      seen.add(key)
+      result.push(clean)
+    }
+  }
+  return result
 }
 
 function parseProductToSizePricingState(product: ProductDetail): SizePricingState {
   const baseStr = String(product.basePrice || '')
-  const sizeMap = new Map<string, number>()
+  const orderedSizes: Array<{ size: string; price: number }> = []
+  const seen = new Set<string>()
 
-  for (const v of product.variations || []) {
-    if (v.isAvailable === false) continue
-    const attrVal = v.attributes?.[0]?.value
-    if (attrVal) {
-      sizeMap.set(normalizeSizeLabel(attrVal), v.price)
-    } else if (v.displayName && v.displayName.toLowerCase() !== 'padrão') {
-      const cleaned = v.displayName.replace(/^tamanho\s+/i, '').trim()
-      if (cleaned) sizeMap.set(normalizeSizeLabel(cleaned), v.price)
-    }
-  }
-
-  if (sizeMap.size === 0 && product.attributes?.length) {
-    for (const attr of product.attributes) {
-      for (const val of attr.values) {
-        if (val.isActive) sizeMap.set(normalizeSizeLabel(val.value), product.basePrice)
+  const sizeAttr = product.attributes?.[0]
+  if (sizeAttr && sizeAttr.values?.length) {
+    for (const val of sizeAttr.values) {
+      if (!val.isActive) continue
+      const matchedVar = (product.variations || []).find(
+        v =>
+          v.isAvailable !== false &&
+          v.attributes?.some(a => a.attributeDefinitionId === sizeAttr.id && a.attributeValueId === val.id)
+      )
+      const price = matchedVar ? matchedVar.price : product.basePrice
+      const key = val.value.trim().toUpperCase()
+      if (key && !seen.has(key)) {
+        seen.add(key)
+        orderedSizes.push({ size: val.value.trim(), price })
       }
     }
   }
 
-  if (sizeMap.size === 0) {
-    return {
-      mode: 'single',
-      singlePrice: baseStr,
-      kids: { enabled: true, price: baseStr, sizes: [...KIDS_SIZES] },
-      adult: { enabled: true, price: baseStr, sizes: [...ADULT_SIZES] },
-      plus: { enabled: true, price: baseStr, sizes: [...PLUS_SIZES] },
-      customSizes: []
+  if (orderedSizes.length === 0) {
+    for (const v of product.variations || []) {
+      if (v.isAvailable === false) continue
+      const attrVal = v.attributes?.[0]?.value?.trim()
+      if (attrVal) {
+        const key = attrVal.toUpperCase()
+        if (!seen.has(key)) {
+          seen.add(key)
+          orderedSizes.push({ size: attrVal, price: v.price })
+        }
+      } else if (v.displayName && v.displayName.toLowerCase() !== 'padrão') {
+        const cleaned = v.displayName.replace(/^tamanho\s+/i, '').trim()
+        const key = cleaned.toUpperCase()
+        if (cleaned && !seen.has(key)) {
+          seen.add(key)
+          orderedSizes.push({ size: cleaned, price: v.price })
+        }
+      }
     }
   }
 
-  const kidsMatched = KIDS_SIZES.filter(s => sizeMap.has(s))
-  const adultMatched = ADULT_SIZES.filter(s => sizeMap.has(s))
-  const plusMatched = PLUS_SIZES.filter(s => sizeMap.has(s))
-
-  const knownSet = new Set<string>([...KIDS_SIZES, ...ADULT_SIZES, ...PLUS_SIZES])
-  const customSizes: Array<{ size: string; price: string }> = []
-  sizeMap.forEach((price, size) => {
-    if (!knownSet.has(size)) {
-      customSizes.push({ size, price: String(price) })
+  if (orderedSizes.length === 0) {
+    return {
+      mode: 'single',
+      singlePrice: baseStr,
+      rows: [{ sizesText: '', price: baseStr }]
     }
-  })
+  }
+
+  // Agrupa tamanhos que têm o mesmo preço em linhas para facilitar a edição
+  const groups: Array<{ price: number; sizes: string[] }> = []
+  for (const item of orderedSizes) {
+    const existingGroup = groups.find(g => Math.abs(g.price - item.price) < 0.001)
+    if (existingGroup) {
+      existingGroup.sizes.push(item.size)
+    } else {
+      groups.push({ price: item.price, sizes: [item.size] })
+    }
+  }
 
   return {
     mode: 'sized',
     singlePrice: baseStr,
-    kids: {
-      enabled: kidsMatched.length > 0,
-      price: kidsMatched.length > 0 ? String(sizeMap.get(kidsMatched[0]) ?? product.basePrice) : baseStr,
-      sizes: kidsMatched.length > 0 ? [...kidsMatched] : [...KIDS_SIZES]
-    },
-    adult: {
-      enabled: adultMatched.length > 0,
-      price: adultMatched.length > 0 ? String(sizeMap.get(adultMatched[0]) ?? product.basePrice) : baseStr,
-      sizes: adultMatched.length > 0 ? [...adultMatched] : [...ADULT_SIZES]
-    },
-    plus: {
-      enabled: plusMatched.length > 0,
-      price: plusMatched.length > 0 ? String(sizeMap.get(plusMatched[0]) ?? product.basePrice) : baseStr,
-      sizes: plusMatched.length > 0 ? [...plusMatched] : [...PLUS_SIZES]
-    },
-    customSizes
+    rows: groups.map(g => ({
+      sizesText: g.sizes.join(', '),
+      price: String(g.price)
+    }))
   }
 }
 
@@ -142,58 +153,55 @@ function buildSizesPayload(state: SizePricingState): {
   }
 
   const sizes: Array<{ size: string; price: number }> = []
+  const seen = new Set<string>()
 
-  if (state.kids.enabled && state.kids.sizes.length > 0) {
-    const p = Number(state.kids.price)
-    if (isNaN(p) || p <= 0) {
-      return { basePrice: 0, sizes: [], error: 'Informe o preço para os tamanhos Infantis (02 ao 10).' }
-    }
-    for (const s of KIDS_SIZES) {
-      if (state.kids.sizes.includes(s)) sizes.push({ size: s, price: p })
-    }
-  }
+  for (let i = 0; i < state.rows.length; i++) {
+    const row = state.rows[i]
+    const parsedSizes = extractSizesFromInput(row.sizesText)
+    const hasPrice = row.price.trim() !== ''
 
-  if (state.adult.enabled && state.adult.sizes.length > 0) {
-    const p = Number(state.adult.price)
-    if (isNaN(p) || p <= 0) {
-      return { basePrice: 0, sizes: [], error: 'Informe o preço para os tamanhos P ao GG.' }
+    if (parsedSizes.length === 0 && !hasPrice) {
+      continue
     }
-    for (const s of ADULT_SIZES) {
-      if (state.adult.sizes.includes(s)) sizes.push({ size: s, price: p })
+    if (parsedSizes.length === 0) {
+      return {
+        basePrice: 0,
+        sizes: [],
+        error: `Digite pelo menos um tamanho na faixa #${i + 1} ou remova a linha.`
+      }
     }
-  }
+    const p = Number(row.price)
+    if (!hasPrice || isNaN(p) || p <= 0) {
+      return {
+        basePrice: 0,
+        sizes: [],
+        error: `Informe um preço válido maior que zero para os tamanhos (${parsedSizes.join(', ')}).`
+      }
+    }
 
-  if (state.plus.enabled && state.plus.sizes.length > 0) {
-    const p = Number(state.plus.price)
-    if (isNaN(p) || p <= 0) {
-      return { basePrice: 0, sizes: [], error: 'Informe o preço para os tamanhos G1 ao G4.' }
+    for (const s of parsedSizes) {
+      const key = s.toUpperCase()
+      if (seen.has(key)) {
+        return {
+          basePrice: 0,
+          sizes: [],
+          error: `O tamanho "${s}" foi informado mais de uma vez. Cada tamanho deve aparecer apenas uma vez.`
+        }
+      }
+      seen.add(key)
+      sizes.push({ size: s, price: p })
     }
-    for (const s of PLUS_SIZES) {
-      if (state.plus.sizes.includes(s)) sizes.push({ size: s, price: p })
-    }
-  }
-
-  for (const custom of state.customSizes) {
-    const label = custom.size.trim()
-    if (!label) continue
-    const p = Number(custom.price)
-    if (isNaN(p) || p <= 0) {
-      return { basePrice: 0, sizes: [], error: `Informe um preço válido para o tamanho "${label}".` }
-    }
-    sizes.push({ size: label, price: p })
   }
 
   if (sizes.length === 0) {
     return {
       basePrice: 0,
       sizes: [],
-      error: 'Ative pelo menos uma faixa de tamanho (ex.: 02 a 10, P a GG ou G1 a G4) ou escolha "Tamanho único".'
+      error: 'Informe pelo menos um tamanho e seu preço, ou mude para "Tamanho único".'
     }
   }
 
-  const adultPrice = state.adult.enabled && state.adult.sizes.length > 0 ? Number(state.adult.price) : 0
-  const basePrice = adultPrice > 0 ? adultPrice : sizes[0].price
-
+  const basePrice = Math.min(...sizes.map(s => s.price))
   return { basePrice, sizes }
 }
 
@@ -204,107 +212,33 @@ function SizePricingEditor({
   value: SizePricingState
   onChange: (next: SizePricingState) => void
 }) {
-  const updateGroup = (key: 'kids' | 'adult' | 'plus', patch: Partial<SizeGroupState>) => {
+  const updateRow = (index: number, patch: Partial<SizePriceRow>) => {
+    const nextRows = value.rows.map((r, i) => (i === index ? { ...r, ...patch } : r))
+    onChange({ ...value, rows: nextRows })
+  }
+
+  const addRow = () => {
     onChange({
       ...value,
-      [key]: { ...value[key], ...patch }
+      rows: [...value.rows, { sizesText: '', price: '' }]
     })
   }
 
-  const toggleSizeInGroup = (
-    key: 'kids' | 'adult' | 'plus',
-    allGroupSizes: readonly string[],
-    size: string
-  ) => {
-    const current = value[key].sizes
-    const exists = current.includes(size)
-    const nextSizes = exists
-      ? current.filter(s => s !== size)
-      : allGroupSizes.filter(s => current.includes(s) || s === size)
-    updateGroup(key, {
-      sizes: nextSizes,
-      enabled: nextSizes.length > 0
+  const removeRow = (index: number) => {
+    if (value.rows.length <= 1) {
+      updateRow(0, { sizesText: '', price: '' })
+      return
+    }
+    onChange({
+      ...value,
+      rows: value.rows.filter((_, i) => i !== index)
     })
   }
 
-  const renderGroupCard = (
-    key: 'kids' | 'adult' | 'plus',
-    title: string,
-    subtitle: string,
-    allSizes: readonly string[],
-    placeholderPrice: string
-  ) => {
-    const group = value[key]
-    return (
-      <div className={`size-group-card ${group.enabled ? 'active' : 'disabled'}`}>
-        <div className="size-group-header">
-          <div>
-            <b>{title}</b>
-            <small>{subtitle}</small>
-          </div>
-          <label className="size-group-toggle">
-            <input
-              type="checkbox"
-              checked={group.enabled}
-              onChange={e =>
-                updateGroup(key, {
-                  enabled: e.target.checked,
-                  sizes: e.target.checked && group.sizes.length === 0 ? [...allSizes] : group.sizes
-                })
-              }
-            />
-            <span>{group.enabled ? 'Ativo' : 'Desativado'}</span>
-          </label>
-        </div>
-
-        {group.enabled && (
-          <div className="size-group-body">
-            <Field label={`Preço ${title} (R$) *`}>
-              <input
-                type="number"
-                min="0.01"
-                step="0.01"
-                required={group.enabled}
-                value={group.price}
-                onChange={e => updateGroup(key, { price: e.target.value })}
-                placeholder={placeholderPrice}
-              />
-            </Field>
-
-            <div className="size-pills-section">
-              <div className="size-pills-header">
-                <small>Tamanhos disponíveis nesta faixa (clique para marcar/desmarcar):</small>
-                {group.sizes.length < allSizes.length && (
-                  <button
-                    type="button"
-                    className="btn-link-xs"
-                    onClick={() => updateGroup(key, { sizes: [...allSizes], enabled: true })}
-                  >
-                    Marcar todos
-                  </button>
-                )}
-              </div>
-              <div className="size-pills-row">
-                {allSizes.map(size => {
-                  const selected = group.sizes.includes(size)
-                  return (
-                    <button
-                      key={size}
-                      type="button"
-                      className={`size-pill-btn ${selected ? 'selected' : ''}`}
-                      onClick={() => toggleSizeInGroup(key, allSizes, size)}
-                    >
-                      {selected && <Check size={14} />}
-                      <span>{size}</span>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    )
+  const removeSingleSizeFromRow = (rowIndex: number, sizeToRemove: string) => {
+    const currentSizes = extractSizesFromInput(value.rows[rowIndex].sizesText)
+    const remaining = currentSizes.filter(s => s.toUpperCase() !== sizeToRemove.toUpperCase())
+    updateRow(rowIndex, { sizesText: remaining.join(', ') })
   }
 
   return (
@@ -312,15 +246,23 @@ function SizePricingEditor({
       <div className="size-pricing-header">
         <div>
           <b>Tamanhos e Preços do Produto *</b>
-          <small>Configure preços diferentes por faixa de tamanho (Infantil 02 a 10, P ao GG e G1 ao G4) ou use preço único.</small>
+          <small>
+            Adicione os tamanhos e o valor de cada faixa (você pode colocar vários tamanhos com o mesmo preço separados por vírgula).
+          </small>
         </div>
         <div className="size-mode-switch">
           <button
             type="button"
             className={value.mode === 'sized' ? 'active' : ''}
-            onClick={() => onChange({ ...value, mode: 'sized' })}
+            onClick={() =>
+              onChange({
+                ...value,
+                mode: 'sized',
+                rows: value.rows.length > 0 ? value.rows : [{ sizesText: '', price: '' }]
+              })
+            }
           >
-            Com grade de tamanhos
+            Com tamanhos
           </button>
           <button
             type="button"
@@ -348,10 +290,73 @@ function SizePricingEditor({
           </Field>
         </div>
       ) : (
-        <div className="size-groups-grid">
-          {renderGroupCard('kids', 'Infantil (02 ao 10)', 'Tamanhos 02, 04, 06, 08 e 10', KIDS_SIZES, 'Ex.: 39.90')}
-          {renderGroupCard('adult', 'Tradicional (P ao GG)', 'Tamanhos P, M, G e GG', ADULT_SIZES, 'Ex.: 49.90')}
-          {renderGroupCard('plus', 'Plus Size (G1 ao G4)', 'Tamanhos G1, G2, G3 e G4', PLUS_SIZES, 'Ex.: 59.90')}
+        <div className="size-rows-stack">
+          {value.rows.map((row, index) => {
+            const parsedSizes = extractSizesFromInput(row.sizesText)
+            return (
+              <div key={index} className="size-row-card">
+                <div className="size-row-inputs">
+                  <Field label={`Tamanhos da faixa #${index + 1} *`}>
+                    <input
+                      type="text"
+                      value={row.sizesText}
+                      onChange={e => updateRow(index, { sizesText: e.target.value })}
+                      placeholder="Digite separados por vírgula (ex.: 02, 04, 06 ou P, M, G, GG)"
+                    />
+                  </Field>
+
+                  <Field label="Preço desta faixa (R$) *">
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      value={row.price}
+                      onChange={e => updateRow(index, { price: e.target.value })}
+                      placeholder="Ex.: 49.90"
+                    />
+                  </Field>
+
+                  {value.rows.length > 1 && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost size-row-delete-btn"
+                      onClick={() => removeRow(index)}
+                      title="Remover esta faixa de tamanho"
+                    >
+                      <Trash2 size={16} />
+                      <span>Remover</span>
+                    </button>
+                  )}
+                </div>
+
+                {parsedSizes.length > 0 && (
+                  <div className="size-row-preview">
+                    <small>Tamanhos incluídos ({parsedSizes.length}):</small>
+                    <div className="size-pills-row">
+                      {parsedSizes.map(size => (
+                        <span key={size} className="size-pill-tag">
+                          <b>{size}</b>
+                          <button
+                            type="button"
+                            onClick={() => removeSingleSizeFromRow(index, size)}
+                            title={`Remover tamanho ${size}`}
+                          >
+                            <X size={12} />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+
+          <div className="size-rows-actions">
+            <button type="button" className="btn btn-secondary btn-small" onClick={addRow}>
+              <Plus size={16} /> Adicionar outra faixa de tamanho / preço
+            </button>
+          </div>
         </div>
       )}
     </div>
