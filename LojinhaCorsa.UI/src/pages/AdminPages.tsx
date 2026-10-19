@@ -21,6 +21,343 @@ export function AdminDashboardPage() {
   return <><PageHeader eyebrow="Visão geral" title="Painel da lojinha" description="Acompanhe o que precisa da sua atenção hoje." /><div className="stats-grid"><StatCard label="Pedidos totais" value={pick('totalOrders', 'ordersCount')} icon={<Package />} /><StatCard label="Pagamentos pendentes" value={pick('pendingPayments', 'pendingPaymentsCount')} icon={<ReceiptText />} tone="orange" /><StatCard label="Prontos para entrega" value={pick('readyForDelivery', 'readyDeliveriesCount')} icon={<Truck />} tone="green" /><StatCard label="Produtos ativos" value={pick('activeProducts', 'productsCount')} icon={<ShoppingBag />} tone="blue" /></div><div className="admin-grid"><section className="panel"><h2>Acesso rápido</h2><div className="quick-actions"><Link to="/admin/pagamentos"><ReceiptText /><span><b>Analisar pagamentos</b><small>Aprovar ou recusar comprovantes</small></span><ChevronRight /></Link><Link to="/admin/lotes"><Package /><span><b>Gerenciar lotes</b><small>Agrupar pedidos para produção</small></span><ChevronRight /></Link><Link to="/admin/entregas"><Truck /><span><b>Registrar entregas</b><small>Pedidos prontos para retirada</small></span><ChevronRight /></Link></div></section><section className="panel dashboard-note"><Gauge /><h2>Operação centralizada</h2><p>Use o menu lateral para gerenciar todo o fluxo da loja, desde o catálogo até a entrega ao associado.</p></section></div></>
 }
 
+const KIDS_SIZES = ['02', '04', '06', '08', '10'] as const
+const ADULT_SIZES = ['P', 'M', 'G', 'GG'] as const
+const PLUS_SIZES = ['G1', 'G2', 'G3', 'G4'] as const
+
+interface SizeGroupState {
+  enabled: boolean
+  price: string
+  sizes: string[]
+}
+
+interface SizePricingState {
+  mode: 'sized' | 'single'
+  singlePrice: string
+  kids: SizeGroupState
+  adult: SizeGroupState
+  plus: SizeGroupState
+  customSizes: Array<{ size: string; price: string }>
+}
+
+function createInitialSizePricingState(defaultPrice = ''): SizePricingState {
+  return {
+    mode: 'sized',
+    singlePrice: defaultPrice,
+    kids: { enabled: true, price: defaultPrice, sizes: [...KIDS_SIZES] },
+    adult: { enabled: true, price: defaultPrice, sizes: [...ADULT_SIZES] },
+    plus: { enabled: true, price: defaultPrice, sizes: [...PLUS_SIZES] },
+    customSizes: []
+  }
+}
+
+function normalizeSizeLabel(raw: string): string {
+  const clean = raw.trim().toUpperCase()
+  if (clean === '2') return '02'
+  if (clean === '4') return '04'
+  if (clean === '6') return '06'
+  if (clean === '8') return '08'
+  return clean
+}
+
+function parseProductToSizePricingState(product: ProductDetail): SizePricingState {
+  const baseStr = String(product.basePrice || '')
+  const sizeMap = new Map<string, number>()
+
+  for (const v of product.variations || []) {
+    if (v.isAvailable === false) continue
+    const attrVal = v.attributes?.[0]?.value
+    if (attrVal) {
+      sizeMap.set(normalizeSizeLabel(attrVal), v.price)
+    } else if (v.displayName && v.displayName.toLowerCase() !== 'padrão') {
+      const cleaned = v.displayName.replace(/^tamanho\s+/i, '').trim()
+      if (cleaned) sizeMap.set(normalizeSizeLabel(cleaned), v.price)
+    }
+  }
+
+  if (sizeMap.size === 0 && product.attributes?.length) {
+    for (const attr of product.attributes) {
+      for (const val of attr.values) {
+        if (val.isActive) sizeMap.set(normalizeSizeLabel(val.value), product.basePrice)
+      }
+    }
+  }
+
+  if (sizeMap.size === 0) {
+    return {
+      mode: 'single',
+      singlePrice: baseStr,
+      kids: { enabled: true, price: baseStr, sizes: [...KIDS_SIZES] },
+      adult: { enabled: true, price: baseStr, sizes: [...ADULT_SIZES] },
+      plus: { enabled: true, price: baseStr, sizes: [...PLUS_SIZES] },
+      customSizes: []
+    }
+  }
+
+  const kidsMatched = KIDS_SIZES.filter(s => sizeMap.has(s))
+  const adultMatched = ADULT_SIZES.filter(s => sizeMap.has(s))
+  const plusMatched = PLUS_SIZES.filter(s => sizeMap.has(s))
+
+  const knownSet = new Set<string>([...KIDS_SIZES, ...ADULT_SIZES, ...PLUS_SIZES])
+  const customSizes: Array<{ size: string; price: string }> = []
+  sizeMap.forEach((price, size) => {
+    if (!knownSet.has(size)) {
+      customSizes.push({ size, price: String(price) })
+    }
+  })
+
+  return {
+    mode: 'sized',
+    singlePrice: baseStr,
+    kids: {
+      enabled: kidsMatched.length > 0,
+      price: kidsMatched.length > 0 ? String(sizeMap.get(kidsMatched[0]) ?? product.basePrice) : baseStr,
+      sizes: kidsMatched.length > 0 ? [...kidsMatched] : [...KIDS_SIZES]
+    },
+    adult: {
+      enabled: adultMatched.length > 0,
+      price: adultMatched.length > 0 ? String(sizeMap.get(adultMatched[0]) ?? product.basePrice) : baseStr,
+      sizes: adultMatched.length > 0 ? [...adultMatched] : [...ADULT_SIZES]
+    },
+    plus: {
+      enabled: plusMatched.length > 0,
+      price: plusMatched.length > 0 ? String(sizeMap.get(plusMatched[0]) ?? product.basePrice) : baseStr,
+      sizes: plusMatched.length > 0 ? [...plusMatched] : [...PLUS_SIZES]
+    },
+    customSizes
+  }
+}
+
+function buildSizesPayload(state: SizePricingState): {
+  basePrice: number
+  sizes: Array<{ size: string; price: number }>
+  error?: string
+} {
+  if (state.mode === 'single') {
+    const p = Number(state.singlePrice)
+    if (isNaN(p) || p <= 0) {
+      return { basePrice: 0, sizes: [], error: 'Informe um preço válido maior que zero (mínimo R$ 0,01).' }
+    }
+    return { basePrice: p, sizes: [] }
+  }
+
+  const sizes: Array<{ size: string; price: number }> = []
+
+  if (state.kids.enabled && state.kids.sizes.length > 0) {
+    const p = Number(state.kids.price)
+    if (isNaN(p) || p <= 0) {
+      return { basePrice: 0, sizes: [], error: 'Informe o preço para os tamanhos Infantis (02 ao 10).' }
+    }
+    for (const s of KIDS_SIZES) {
+      if (state.kids.sizes.includes(s)) sizes.push({ size: s, price: p })
+    }
+  }
+
+  if (state.adult.enabled && state.adult.sizes.length > 0) {
+    const p = Number(state.adult.price)
+    if (isNaN(p) || p <= 0) {
+      return { basePrice: 0, sizes: [], error: 'Informe o preço para os tamanhos P ao GG.' }
+    }
+    for (const s of ADULT_SIZES) {
+      if (state.adult.sizes.includes(s)) sizes.push({ size: s, price: p })
+    }
+  }
+
+  if (state.plus.enabled && state.plus.sizes.length > 0) {
+    const p = Number(state.plus.price)
+    if (isNaN(p) || p <= 0) {
+      return { basePrice: 0, sizes: [], error: 'Informe o preço para os tamanhos G1 ao G4.' }
+    }
+    for (const s of PLUS_SIZES) {
+      if (state.plus.sizes.includes(s)) sizes.push({ size: s, price: p })
+    }
+  }
+
+  for (const custom of state.customSizes) {
+    const label = custom.size.trim()
+    if (!label) continue
+    const p = Number(custom.price)
+    if (isNaN(p) || p <= 0) {
+      return { basePrice: 0, sizes: [], error: `Informe um preço válido para o tamanho "${label}".` }
+    }
+    sizes.push({ size: label, price: p })
+  }
+
+  if (sizes.length === 0) {
+    return {
+      basePrice: 0,
+      sizes: [],
+      error: 'Ative pelo menos uma faixa de tamanho (ex.: 02 a 10, P a GG ou G1 a G4) ou escolha "Tamanho único".'
+    }
+  }
+
+  const adultPrice = state.adult.enabled && state.adult.sizes.length > 0 ? Number(state.adult.price) : 0
+  const basePrice = adultPrice > 0 ? adultPrice : sizes[0].price
+
+  return { basePrice, sizes }
+}
+
+function SizePricingEditor({
+  value,
+  onChange
+}: {
+  value: SizePricingState
+  onChange: (next: SizePricingState) => void
+}) {
+  const updateGroup = (key: 'kids' | 'adult' | 'plus', patch: Partial<SizeGroupState>) => {
+    onChange({
+      ...value,
+      [key]: { ...value[key], ...patch }
+    })
+  }
+
+  const toggleSizeInGroup = (
+    key: 'kids' | 'adult' | 'plus',
+    allGroupSizes: readonly string[],
+    size: string
+  ) => {
+    const current = value[key].sizes
+    const exists = current.includes(size)
+    const nextSizes = exists
+      ? current.filter(s => s !== size)
+      : allGroupSizes.filter(s => current.includes(s) || s === size)
+    updateGroup(key, {
+      sizes: nextSizes,
+      enabled: nextSizes.length > 0
+    })
+  }
+
+  const renderGroupCard = (
+    key: 'kids' | 'adult' | 'plus',
+    title: string,
+    subtitle: string,
+    allSizes: readonly string[],
+    placeholderPrice: string
+  ) => {
+    const group = value[key]
+    return (
+      <div className={`size-group-card ${group.enabled ? 'active' : 'disabled'}`}>
+        <div className="size-group-header">
+          <div>
+            <b>{title}</b>
+            <small>{subtitle}</small>
+          </div>
+          <label className="size-group-toggle">
+            <input
+              type="checkbox"
+              checked={group.enabled}
+              onChange={e =>
+                updateGroup(key, {
+                  enabled: e.target.checked,
+                  sizes: e.target.checked && group.sizes.length === 0 ? [...allSizes] : group.sizes
+                })
+              }
+            />
+            <span>{group.enabled ? 'Ativo' : 'Desativado'}</span>
+          </label>
+        </div>
+
+        {group.enabled && (
+          <div className="size-group-body">
+            <Field label={`Preço ${title} (R$) *`}>
+              <input
+                type="number"
+                min="0.01"
+                step="0.01"
+                required={group.enabled}
+                value={group.price}
+                onChange={e => updateGroup(key, { price: e.target.value })}
+                placeholder={placeholderPrice}
+              />
+            </Field>
+
+            <div className="size-pills-section">
+              <div className="size-pills-header">
+                <small>Tamanhos disponíveis nesta faixa (clique para marcar/desmarcar):</small>
+                {group.sizes.length < allSizes.length && (
+                  <button
+                    type="button"
+                    className="btn-link-xs"
+                    onClick={() => updateGroup(key, { sizes: [...allSizes], enabled: true })}
+                  >
+                    Marcar todos
+                  </button>
+                )}
+              </div>
+              <div className="size-pills-row">
+                {allSizes.map(size => {
+                  const selected = group.sizes.includes(size)
+                  return (
+                    <button
+                      key={size}
+                      type="button"
+                      className={`size-pill-btn ${selected ? 'selected' : ''}`}
+                      onClick={() => toggleSizeInGroup(key, allSizes, size)}
+                    >
+                      {selected && <Check size={14} />}
+                      <span>{size}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="size-pricing-section">
+      <div className="size-pricing-header">
+        <div>
+          <b>Tamanhos e Preços do Produto *</b>
+          <small>Configure preços diferentes por faixa de tamanho (Infantil 02 a 10, P ao GG e G1 ao G4) ou use preço único.</small>
+        </div>
+        <div className="size-mode-switch">
+          <button
+            type="button"
+            className={value.mode === 'sized' ? 'active' : ''}
+            onClick={() => onChange({ ...value, mode: 'sized' })}
+          >
+            Com grade de tamanhos
+          </button>
+          <button
+            type="button"
+            className={value.mode === 'single' ? 'active' : ''}
+            onClick={() => onChange({ ...value, mode: 'single' })}
+          >
+            Tamanho único
+          </button>
+        </div>
+      </div>
+
+      {value.mode === 'single' ? (
+        <div className="single-price-box">
+          <Field label="Preço único do produto (R$) *">
+            <input
+              required
+              min="0.01"
+              step="0.01"
+              type="number"
+              value={value.singlePrice}
+              onChange={e => onChange({ ...value, singlePrice: e.target.value })}
+              placeholder="Ex.: 49.90"
+            />
+            <small className="field-hint">Ideal para adesivos, bonés, chaveiros ou itens sem variação de tamanho.</small>
+          </Field>
+        </div>
+      ) : (
+        <div className="size-groups-grid">
+          {renderGroupCard('kids', 'Infantil (02 ao 10)', 'Tamanhos 02, 04, 06, 08 e 10', KIDS_SIZES, 'Ex.: 39.90')}
+          {renderGroupCard('adult', 'Tradicional (P ao GG)', 'Tamanhos P, M, G e GG', ADULT_SIZES, 'Ex.: 49.90')}
+          {renderGroupCard('plus', 'Plus Size (G1 ao G4)', 'Tamanhos G1, G2, G3 e G4', PLUS_SIZES, 'Ex.: 59.90')}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function AdminProductsPage() {
   const notify = useToast()
   const [active, setActive] = useState('')
@@ -29,7 +366,8 @@ export function AdminProductsPage() {
 
   // Criação de novo produto
   const [isCreating, setIsCreating] = useState(false)
-  const [newProduct, setNewProduct] = useState({ name: '', basePrice: '', description: '' })
+  const [newProduct, setNewProduct] = useState({ name: '', description: '' })
+  const [newSizePricing, setNewSizePricing] = useState<SizePricingState>(() => createInitialSizePricingState())
   const [newPhotos, setNewPhotos] = useState<Array<{ file: File; preview: string }>>([])
   const [newPhotoError, setNewPhotoError] = useState('')
   const [savingNew, setSavingNew] = useState(false)
@@ -107,16 +445,17 @@ export function AdminProductsPage() {
 
   function openCreate() {
     clearNewPhotos()
-    setNewProduct({ name: '', basePrice: '', description: '' })
+    setNewProduct({ name: '', description: '' })
+    setNewSizePricing(createInitialSizePricingState())
     setNewPhotoError('')
     setIsCreating(true)
   }
 
   async function handleCreateProduct(event: FormEvent) {
     event.preventDefault()
-    const priceNum = Number(newProduct.basePrice)
-    if (isNaN(priceNum) || priceNum <= 0) {
-      notify('O preço base deve ser maior que zero (mínimo R$ 0,01).', 'error')
+    const built = buildSizesPayload(newSizePricing)
+    if (built.error) {
+      notify(built.error, 'error')
       return
     }
     if (newPhotos.length === 0) {
@@ -130,7 +469,10 @@ export function AdminProductsPage() {
       const form = new FormData()
       form.append('name', newProduct.name.trim())
       form.append('description', newProduct.description.trim())
-      form.append('price', String(priceNum))
+      form.append('price', String(built.basePrice))
+      if (built.sizes.length > 0) {
+        form.append('sizesJson', JSON.stringify(built.sizes))
+      }
       newPhotos.forEach(item => form.append('photos', item.file))
       await api.upload<{ id: string }>('/admin/products/simple', form)
       notify('Produto cadastrado com sucesso!')
@@ -170,7 +512,7 @@ export function AdminProductsPage() {
       <PageHeader
         eyebrow="Catálogo"
         title="Produtos"
-        description="Preencha os dados básicos e salve. O produto já fica pronto para venda."
+        description="Preencha os dados básicos, defina os preços por faixa de tamanho e salve."
         actions={<button className="btn btn-primary" onClick={openCreate}><Plus /> Novo produto</button>}
       />
       <div className="admin-toolbar">
@@ -236,7 +578,7 @@ export function AdminProductsPage() {
                   <td>
                     <div className="table-actions">
                       <button
-                        title="Editar produto"
+                        title="Editar produto e tamanhos"
                         onClick={() => setManageId(product.id)}
                       >
                         <Pencil />
@@ -264,7 +606,9 @@ export function AdminProductsPage() {
           wide
         >
           <form onSubmit={handleCreateProduct}>
-            <div className="product-modal-banner">Preencha os dados e anexe uma ou mais fotos do produto. A primeira imagem será usada como capa e o produto poderá ser editado a qualquer momento.</div>
+            <div className="product-modal-banner">
+              Preencha os dados, configure os preços por faixa de tamanho (Infantil 02 a 10, P ao GG e G1 ao G4) e anexe as fotos do produto.
+            </div>
 
             <div className="form-grid">
               <Field label="Nome do produto *">
@@ -276,28 +620,17 @@ export function AdminProductsPage() {
                 />
               </Field>
 
-              <Field label="Preço (R$) *">
-                <input
-                  required
-                  min="0.01"
-                  step="0.01"
-                  type="number"
-                  value={newProduct.basePrice}
-                  onChange={e => setNewProduct({ ...newProduct, basePrice: e.target.value })}
-                  placeholder="Ex.: 49.90"
-                />
-                <small className="field-hint">Preço mínimo de R$ 0,01.</small>
-              </Field>
-
               <Field label="Descrição">
                 <textarea
-                  rows={3}
+                  rows={2}
                   value={newProduct.description}
                   onChange={e => setNewProduct({ ...newProduct, description: e.target.value })}
                   placeholder="Informações sobre material, medidas ou modelo..."
                 />
               </Field>
             </div>
+
+            <SizePricingEditor value={newSizePricing} onChange={setNewSizePricing} />
 
             {/* Upload de Fotos do Produto */}
             <div className="product-image-section">
@@ -405,7 +738,7 @@ export function AdminProductsPage() {
 function ProductManager({ productId, onClose }: { productId: string; onClose(): void }) {
   const notify = useToast()
   const product = useApi(() => api.get<ProductDetail>(`/products/${productId}`), [productId])
-  const [tab, setTab] = useState<'general' | 'photos' | 'attributes' | 'variations' | 'discounts'>('general')
+  const [tab, setTab] = useState<'general' | 'sizes' | 'photos' | 'discounts'>('general')
 
   // Estado da aba Dados Gerais
   const [generalForm, setGeneralForm] = useState({ name: '', basePrice: '', description: '', isAvailable: true })
@@ -414,19 +747,17 @@ function ProductManager({ productId, onClose }: { productId: string; onClose(): 
   const [mainPhotoError, setMainPhotoError] = useState('')
   const [savingGeneral, setSavingGeneral] = useState(false)
 
-  // Estado das outras abas
+  // Estado da aba Tamanhos e Preços
+  const [sizePricing, setSizePricing] = useState<SizePricingState>(() => createInitialSizePricingState())
+  const [savingSizes, setSavingSizes] = useState(false)
+
+  // Estado da aba Fotos
   const [filesToUpload, setFilesToUpload] = useState<Array<{ file: File; preview: string }>>([])
   const [alt, setAlt] = useState('')
   const [uploadError, setUploadError] = useState('')
   const [uploading, setUploading] = useState(false)
 
-  const [attribute, setAttribute] = useState({ name: '', code: '', values: '' })
-  const [variation, setVariation] = useState({
-    displayName: '',
-    sku: '',
-    priceOverride: '',
-    attributeValueIds: [] as string[]
-  })
+  // Estado da aba Descontos
   const [discount, setDiscount] = useState({ minimumQuantity: '2', discountPerUnit: '' })
 
   useEffect(() => {
@@ -437,6 +768,7 @@ function ProductManager({ productId, onClose }: { productId: string; onClose(): 
         description: product.data.description || '',
         isAvailable: product.data.isAvailable !== false
       })
+      setSizePricing(parseProductToSizePricingState(product.data))
     }
   }, [product.data])
 
@@ -477,9 +809,9 @@ function ProductManager({ productId, onClose }: { productId: string; onClose(): 
     event.preventDefault()
     if (!product.data) return
 
-    const priceNum = Number(generalForm.basePrice)
-    if (isNaN(priceNum) || priceNum <= 0) {
-      notify('O preço base deve ser maior que zero (mínimo R$ 0,01).', 'error')
+    const built = buildSizesPayload(sizePricing)
+    if (built.error) {
+      notify(built.error, 'error')
       return
     }
     if (mainPhotoError) {
@@ -494,8 +826,12 @@ function ProductManager({ productId, onClose }: { productId: string; onClose(): 
         name: generalForm.name.trim(),
         slug: product.data.slug,
         description: generalForm.description.trim(),
-        basePrice: priceNum,
+        basePrice: built.basePrice,
         isAvailable: generalForm.isAvailable
+      })
+      await api.put(`/admin/products/${productId}/sizes`, {
+        basePrice: built.basePrice,
+        sizes: built.sizes
       })
       if (mainPhoto) {
         const form = new FormData()
@@ -506,12 +842,34 @@ function ProductManager({ productId, onClose }: { productId: string; onClose(): 
         setMainPhoto(null)
         setMainPhotoPreview('')
       }
-      notify('Produto atualizado com sucesso!')
+      notify('Produto e tamanhos atualizados com sucesso!')
       await product.reload()
     } catch (error) {
       notify(errorMessage(error), 'error')
     } finally {
       setSavingGeneral(false)
+    }
+  }
+
+  async function saveSizes(event: FormEvent) {
+    event.preventDefault()
+    const built = buildSizesPayload(sizePricing)
+    if (built.error) {
+      notify(built.error, 'error')
+      return
+    }
+    setSavingSizes(true)
+    try {
+      await api.put(`/admin/products/${productId}/sizes`, {
+        basePrice: built.basePrice,
+        sizes: built.sizes
+      })
+      notify('Tamanhos e preços salvos com sucesso!')
+      await product.reload()
+    } catch (error) {
+      notify(errorMessage(error), 'error')
+    } finally {
+      setSavingSizes(false)
     }
   }
 
@@ -577,45 +935,6 @@ function ProductManager({ productId, onClose }: { productId: string; onClose(): 
     }
   }
 
-  async function addAttribute(event: FormEvent) {
-    event.preventDefault()
-    try {
-      await api.post(`/admin/products/${productId}/attributes`, {
-        name: attribute.name,
-        code: attribute.code,
-        sortOrder: product.data?.attributes.length || 0,
-        isRequired: true,
-        values: attribute.values
-          .split(',')
-          .map(v => v.trim())
-          .filter(Boolean)
-      })
-      notify('Atributo criado com sucesso.')
-      setAttribute({ name: '', code: '', values: '' })
-      await product.reload()
-    } catch (error) {
-      notify(errorMessage(error), 'error')
-    }
-  }
-
-  async function addVariation(event: FormEvent) {
-    event.preventDefault()
-    try {
-      await api.post(`/admin/products/${productId}/variations`, {
-        displayName: variation.displayName,
-        sku: variation.sku,
-        priceOverride: variation.priceOverride ? Number(variation.priceOverride) : null,
-        isAvailable: true,
-        attributeValueIds: variation.attributeValueIds
-      })
-      notify('Variação criada com sucesso.')
-      setVariation({ displayName: '', sku: '', priceOverride: '', attributeValueIds: [] })
-      await product.reload()
-    } catch (error) {
-      notify(errorMessage(error), 'error')
-    }
-  }
-
   async function deletePhoto(id: string) {
     if (!confirm('Excluir esta foto?')) return
     try {
@@ -653,6 +972,9 @@ function ProductManager({ productId, onClose }: { productId: string; onClose(): 
     }
   }
 
+  const activeSizesCount =
+    product.data?.variations.filter(v => v.isAvailable !== false && v.attributes?.length > 0).length || 0
+
   return (
     <Modal title={product.data ? `Editar produto: ${product.data.name}` : 'Editar produto'} onClose={onClose} wide>
       {product.loading ? (
@@ -667,7 +989,14 @@ function ProductManager({ productId, onClose }: { productId: string; onClose(): 
               className={tab === 'general' ? 'active' : ''}
               onClick={() => setTab('general')}
             >
-              Dados Gerais
+              Dados Gerais e Tamanhos
+            </button>
+            <button
+              type="button"
+              className={tab === 'sizes' ? 'active' : ''}
+              onClick={() => setTab('sizes')}
+            >
+              Tamanhos e Preços ({activeSizesCount || 'Único'})
             </button>
             <button
               type="button"
@@ -675,20 +1004,6 @@ function ProductManager({ productId, onClose }: { productId: string; onClose(): 
               onClick={() => setTab('photos')}
             >
               Fotos ({product.data.photos.length})
-            </button>
-            <button
-              type="button"
-              className={tab === 'attributes' ? 'active' : ''}
-              onClick={() => setTab('attributes')}
-            >
-              Atributos ({product.data.attributes.length})
-            </button>
-            <button
-              type="button"
-              className={tab === 'variations' ? 'active' : ''}
-              onClick={() => setTab('variations')}
-            >
-              Variações ({product.data.variations.length})
             </button>
             <button
               type="button"
@@ -711,19 +1026,6 @@ function ProductManager({ productId, onClose }: { productId: string; onClose(): 
                   />
                 </Field>
 
-                <Field label="Preço base (R$) *">
-                  <input
-                    required
-                    min="0.01"
-                    step="0.01"
-                    type="number"
-                    value={generalForm.basePrice}
-                    onChange={e => setGeneralForm({ ...generalForm, basePrice: e.target.value })}
-                    placeholder="Ex.: 49.90"
-                  />
-                  <small className="field-hint">Preço mínimo de R$ 0,01.</small>
-                </Field>
-
                 <Field label="Disponibilidade">
                   <select
                     value={String(generalForm.isAvailable)}
@@ -736,13 +1038,15 @@ function ProductManager({ productId, onClose }: { productId: string; onClose(): 
 
                 <Field label="Descrição">
                   <textarea
-                    rows={3}
+                    rows={2}
                     value={generalForm.description}
                     onChange={e => setGeneralForm({ ...generalForm, description: e.target.value })}
                     placeholder="Informações sobre material, medidas ou modelo..."
                   />
                 </Field>
               </div>
+
+              <SizePricingEditor value={sizePricing} onChange={setSizePricing} />
 
               {/* Foto Principal */}
               <div className="product-image-section">
@@ -802,7 +1106,18 @@ function ProductManager({ productId, onClose }: { productId: string; onClose(): 
 
               <div className="modal-actions">
                 <button className="btn btn-primary" type="submit" disabled={savingGeneral}>
-                  <Check /> {savingGeneral ? 'Salvando...' : 'Salvar dados do produto'}
+                  <Check /> {savingGeneral ? 'Salvando...' : 'Salvar produto e tamanhos'}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {tab === 'sizes' && (
+            <form onSubmit={saveSizes} className="stack-form">
+              <SizePricingEditor value={sizePricing} onChange={setSizePricing} />
+              <div className="modal-actions">
+                <button className="btn btn-primary" type="submit" disabled={savingSizes}>
+                  <Check /> {savingSizes ? 'Salvando...' : 'Salvar tamanhos e preços'}
                 </button>
               </div>
             </form>
@@ -883,128 +1198,6 @@ function ProductManager({ productId, onClose }: { productId: string; onClose(): 
                 </div>
               )}
             </div>
-          )}
-
-          {tab === 'attributes' && (
-            <>
-              <div className="chip-list">
-                {product.data.attributes.map(attr => (
-                  <span key={attr.id}>
-                    <b>{attr.name}:</b> {attr.values.map(v => v.value).join(', ')}
-                  </span>
-                ))}
-              </div>
-              <form className="stack-form" onSubmit={addAttribute}>
-                <Field label="Nome">
-                  <input
-                    required
-                    value={attribute.name}
-                    onChange={e => setAttribute({ ...attribute, name: e.target.value })}
-                    placeholder="Ex.: Tamanho"
-                  />
-                </Field>
-                <Field label="Código">
-                  <input
-                    required
-                    value={attribute.code}
-                    onChange={e => setAttribute({ ...attribute, code: e.target.value })}
-                    placeholder="tamanho"
-                  />
-                </Field>
-                <Field label="Valores separados por vírgula">
-                  <input
-                    required
-                    value={attribute.values}
-                    onChange={e => setAttribute({ ...attribute, values: e.target.value })}
-                    placeholder="P, M, G, GG"
-                  />
-                </Field>
-                <button className="btn btn-primary">Adicionar atributo</button>
-              </form>
-            </>
-          )}
-
-          {tab === 'variations' && (
-            <>
-              <div className="variation-list">
-                {product.data.variations.map(item => (
-                  <div key={item.id}>
-                    <div>
-                      <b>{item.displayName}</b>
-                      <small>
-                        SKU {item.sku} • {item.attributes.map(a => a.value).join(' / ')}
-                      </small>
-                    </div>
-                    <b>{currency(item.price)}</b>
-                  </div>
-                ))}
-              </div>
-              <form className="stack-form" onSubmit={addVariation}>
-                <div className="form-grid">
-                  <Field label="Nome da variação">
-                    <input
-                      required
-                      value={variation.displayName}
-                      onChange={e => setVariation({ ...variation, displayName: e.target.value })}
-                      placeholder="Ex.: Tamanho G"
-                    />
-                  </Field>
-                  <Field label="SKU">
-                    <input
-                      required
-                      value={variation.sku}
-                      onChange={e => setVariation({ ...variation, sku: e.target.value })}
-                      placeholder="CAM-G"
-                    />
-                  </Field>
-                  <Field label="Preço específico (opcional)">
-                    <input
-                      type="number"
-                      min="0.01"
-                      step="0.01"
-                      value={variation.priceOverride}
-                      onChange={e =>
-                        setVariation({ ...variation, priceOverride: e.target.value })
-                      }
-                      placeholder="Se deixar vazio, usa o preço base"
-                    />
-                  </Field>
-                </div>
-                <div className="attribute-selector">
-                  {product.data.attributes.map(attr => (
-                    <Field key={attr.id} label={attr.name}>
-                      <select
-                        required
-                        value={
-                          variation.attributeValueIds.find(id =>
-                            attr.values.some(v => v.id === id)
-                          ) || ''
-                        }
-                        onChange={e =>
-                          setVariation({
-                            ...variation,
-                            attributeValueIds: [
-                              ...variation.attributeValueIds.filter(
-                                id => !attr.values.some(v => v.id === id)
-                              ),
-                              e.target.value
-                            ]
-                          })
-                        }
-                      >
-                        <option value="">Selecione</option>
-                        {attr.values.map(v => (
-                          <option key={v.id} value={v.id}>
-                            {v.value}
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
-                  ))}
-                </div>
-                <button className="btn btn-primary">Criar variação</button>
-              </form>
-            </>
           )}
 
           {tab === 'discounts' && (

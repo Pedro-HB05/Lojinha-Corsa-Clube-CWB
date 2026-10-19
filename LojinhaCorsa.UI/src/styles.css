@@ -1942,6 +1942,243 @@ tr:hover td {
   font-weight: 500;
 }
 
+/* Size & Price Range Editor */
+.size-pricing-section {
+  margin-top: 20px;
+  margin-bottom: 20px;
+  background-color: var(--bg-surface-raised);
+  border: 1px solid var(--border-line);
+  border-radius: 12px;
+  padding: 18px;
+}
+
+.size-pricing-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.size-pricing-header > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.size-pricing-header b {
+  font-size: 0.95rem;
+  color: var(--text-main);
+}
+
+.size-pricing-header small {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.size-mode-switch {
+  display: inline-flex;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-line);
+  border-radius: 10px;
+  padding: 4px;
+  gap: 4px;
+}
+
+.size-mode-switch button {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 8px 14px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.size-mode-switch button.active {
+  background: var(--orange);
+  color: #fff;
+}
+
+.single-price-box {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-line);
+  border-radius: 10px;
+  padding: 16px;
+  max-width: 420px;
+}
+
+.size-groups-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+}
+
+.size-group-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-line);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  transition: border-color 0.2s ease, opacity 0.2s ease;
+}
+
+.size-group-card.active {
+  border-color: var(--orange);
+}
+
+.size-group-card.disabled {
+  opacity: 0.65;
+}
+
+.size-group-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.size-group-header > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.size-group-header b {
+  font-size: 0.94rem;
+  color: var(--text-main);
+}
+
+.size-group-header small {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+.size-group-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.size-group-toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--orange);
+  cursor: pointer;
+}
+
+.size-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-top: 1px solid var(--border-line);
+  padding-top: 12px;
+}
+
+.size-pills-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.size-pills-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.size-pills-header small {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+.btn-link-xs {
+  border: none;
+  background: transparent;
+  color: var(--orange);
+  font-size: 0.76rem;
+  font-weight: 700;
+  padding: 0;
+  cursor: pointer;
+}
+
+.btn-link-xs:hover {
+  text-decoration: underline;
+}
+
+.size-pills-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.size-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 44px;
+  padding: 7px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background-color: var(--bg-surface-raised);
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.size-pill-btn.selected {
+  border-color: var(--orange);
+  background-color: var(--orange-subtle);
+  color: var(--orange);
+}
+
+/* Storefront Size Groups on Product Detail */
+.store-size-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.store-size-group-box {
+  background-color: var(--bg-surface-raised);
+  border: 1px solid var(--border-line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.store-size-group-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.84rem;
+}
+
+.store-size-group-title span {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.store-size-group-title b {
+  color: var(--orange);
+  font-size: 0.92rem;
+}
+
 .manage-after-create {
   margin-top: 16px;
   margin-bottom: 20px;

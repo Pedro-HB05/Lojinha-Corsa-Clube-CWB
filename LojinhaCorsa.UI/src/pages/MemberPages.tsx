@@ -326,7 +326,10 @@ export function ProductDetailPage() {
       setPhoto(product.photos.find(item => item.isPrimary)?.id || product.photos[0]?.id)
       const defaults: Record<string, string> = {}
       product.attributes.forEach(attr => {
-        if (attr.values[0]) defaults[attr.id] = attr.values[0].id
+        const activeValues = attr.values.filter(v => v.isActive)
+        const preferredAdult = activeValues.find(v => ['P', 'M', 'G', 'GG'].includes(v.value.trim().toUpperCase()))
+        const firstVal = preferredAdult || activeValues[0] || attr.values[0]
+        if (firstVal) defaults[attr.id] = firstVal.id
       })
       setSelected(defaults)
     }
@@ -421,11 +424,39 @@ export function ProductDetailPage() {
           )}
 
           {/* Seletores de Atributos / Variações */}
-          {product.attributes.map(attribute => (
-            <div className="option-group" key={attribute.id}>
-              <label>Escolha o {attribute.name}:</label>
+          {product.attributes.map(attribute => {
+            const getValuePrice = (valId: string) => {
+              const found = product.variations.find(v =>
+                v.attributes?.some(a => a.attributeDefinitionId === attribute.id && a.attributeValueId === valId)
+              )
+              return found ? found.price : product.basePrice
+            }
+
+            const norm = (val: string) => {
+              const u = val.trim().toUpperCase()
+              if (u === '2') return '02'
+              if (u === '4') return '04'
+              if (u === '6') return '06'
+              if (u === '8') return '08'
+              return u
+            }
+
+            const kidsSet = new Set(['02', '04', '06', '08', '10'])
+            const adultSet = new Set(['P', 'M', 'G', 'GG'])
+            const plusSet = new Set(['G1', 'G2', 'G3', 'G4'])
+
+            const kidsValues = attribute.values.filter(v => kidsSet.has(norm(v.value)))
+            const adultValues = attribute.values.filter(v => adultSet.has(norm(v.value)))
+            const plusValues = attribute.values.filter(v => plusSet.has(norm(v.value)))
+            const otherValues = attribute.values.filter(
+              v => !kidsSet.has(norm(v.value)) && !adultSet.has(norm(v.value)) && !plusSet.has(norm(v.value))
+            )
+
+            const hasGroupedSizes = kidsValues.length > 0 || adultValues.length > 0 || plusValues.length > 0
+
+            const renderButtons = (vals: typeof attribute.values) => (
               <div className="option-list">
-                {attribute.values.map(value => (
+                {vals.map(value => (
                   <button
                     type="button"
                     className={selected[attribute.id] === value.id ? 'selected' : ''}
@@ -438,8 +469,55 @@ export function ProductDetailPage() {
                   </button>
                 ))}
               </div>
-            </div>
-          ))}
+            )
+
+            return (
+              <div className="option-group" key={attribute.id}>
+                <label>Escolha o {attribute.name}:</label>
+                {hasGroupedSizes ? (
+                  <div className="store-size-groups">
+                    {kidsValues.length > 0 && (
+                      <div className="store-size-group-box">
+                        <div className="store-size-group-title">
+                          <span>Infantil (02 ao 10)</span>
+                          <b>{currency(getValuePrice(kidsValues[0].id))}</b>
+                        </div>
+                        {renderButtons(kidsValues)}
+                      </div>
+                    )}
+                    {adultValues.length > 0 && (
+                      <div className="store-size-group-box">
+                        <div className="store-size-group-title">
+                          <span>Tradicional (P ao GG)</span>
+                          <b>{currency(getValuePrice(adultValues[0].id))}</b>
+                        </div>
+                        {renderButtons(adultValues)}
+                      </div>
+                    )}
+                    {plusValues.length > 0 && (
+                      <div className="store-size-group-box">
+                        <div className="store-size-group-title">
+                          <span>Plus Size (G1 ao G4)</span>
+                          <b>{currency(getValuePrice(plusValues[0].id))}</b>
+                        </div>
+                        {renderButtons(plusValues)}
+                      </div>
+                    )}
+                    {otherValues.length > 0 && (
+                      <div className="store-size-group-box">
+                        <div className="store-size-group-title">
+                          <span>Outros tamanhos</span>
+                        </div>
+                        {renderButtons(otherValues)}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  renderButtons(attribute.values)
+                )}
+              </div>
+            )
+          })}
 
           {/* Quantidade */}
           <div className="quantity-row">
