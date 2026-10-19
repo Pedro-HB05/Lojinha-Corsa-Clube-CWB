@@ -44,12 +44,15 @@ public sealed class ProductsController(AppDbContext db, ICurrentUser currentUser
                     .Select(d => new { d.Id, d.MinimumQuantity, d.DiscountPerUnit }),
                 Category = x.Category == null ? null : new { x.Category.Id, x.Category.Name },
                 Photos = x.Photos.OrderByDescending(p => p.IsPrimary).ThenBy(p => p.SortOrder).ThenBy(p => p.CreatedAt).Select(p => new { p.Id, p.AltText, p.IsPrimary, p.SortOrder }),
-                Attributes = x.AttributeDefinitions.OrderBy(a => a.SortOrder).Select(a => new
-                {
-                    a.Id, a.Name, a.Code, a.IsRequired,
-                    Values = a.Values.OrderBy(v => v.SortOrder).Select(v => new { v.Id, v.Value, v.IsActive })
-                }),
-                Variations = x.Variations.Where(v => v.IsAvailable).Select(v => new
+                Attributes = x.AttributeDefinitions
+                    .Where(a => a.Values.Any(v => v.IsActive))
+                    .OrderBy(a => a.SortOrder)
+                    .Select(a => new
+                    {
+                        a.Id, a.Name, a.Code, a.IsRequired,
+                        Values = a.Values.Where(v => v.IsActive).OrderBy(v => v.SortOrder).Select(v => new { v.Id, v.Value, v.IsActive })
+                    }),
+                Variations = x.Variations.Where(v => v.IsAvailable).OrderBy(v => v.CreatedAt).Select(v => new
                 {
                     v.Id, v.Sku, v.DisplayName, v.PriceOverride, Price = v.PriceOverride ?? x.BasePrice,
                     Attributes = v.AttributeValues.Select(av => new { av.AttributeDefinitionId,
@@ -109,6 +112,32 @@ public sealed class ProductsController(AppDbContext db, ICurrentUser currentUser
         if (uploadedFiles.Count == 0)
             throw new AppException(400, "Selecione pelo menos uma foto do produto.");
 
+        var cleanSizes = new List<ProductSizeItemRequest>();
+        if (!string.IsNullOrWhiteSpace(request.SizesJson))
+        {
+            List<ProductSizeItemRequest>? parsed;
+            try
+            {
+                parsed = System.Text.Json.JsonSerializer.Deserialize<List<ProductSizeItemRequest>>(
+                    request.SizesJson,
+                    new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            }
+            catch
+            {
+                throw new AppException(400, "Formato inválido para a configuração de tamanhos.");
+            }
+
+            cleanSizes = (parsed ?? [])
+                .Where(x => !string.IsNullOrWhiteSpace(x.Size))
+                .Select(x => new ProductSizeItemRequest(x.Size.Trim(), x.Price))
+                .GroupBy(x => x.Size, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.First())
+                .ToList();
+
+            if (cleanSizes.Any(x => x.Price <= 0))
+                throw new AppException(400, "Todos os tamanhos selecionados devem ter preço maior que zero.");
+        }
+
         var now = DateTimeOffset.UtcNow;
         var productId = Guid.NewGuid();
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
@@ -128,8 +157,66 @@ public sealed class ProductsController(AppDbContext db, ICurrentUser currentUser
                 CreatedBy = currentUser.UserId,
                 UpdatedBy = currentUser.UserId
             };
-            var variation = CreateDefaultVariation(productId, now);
-            db.AddRange(product, variation);
+            db.Add(product);
+
+            if (cleanSizes.Count == 0)
+            {
+                db.Add(CreateDefaultVariation(productId, now));
+            }
+            else
+            {
+                var sizeDefinition = new ProductAttributeDefinition
+                {
+                    Id = Guid.NewGuid(),
+                    ProductId = productId,
+                    Name = "Tamanho",
+                    Code = "tamanho",
+                    SortOrder = 0,
+                    IsRequired = true,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                };
+                db.Add(sizeDefinition);
+
+                for (var i = 0; i < cleanSizes.Count; i++)
+                {
+                    var item = cleanSizes[i];
+                    var val = new ProductAttributeValue
+                    {
+                        Id = Guid.NewGuid(),
+                        AttributeDefinitionId = sizeDefinition.Id,
+                        Value = item.Size,
+                        SortOrder = i,
+                        IsActive = true,
+                        CreatedAt = now,
+                        UpdatedAt = now
+                    };
+                    db.Add(val);
+
+                    var variation = new ProductVariation
+                    {
+                        Id = Guid.NewGuid(),
+                        ProductId = productId,
+                        DisplayName = $"Tamanho {item.Size}",
+                        Sku = $"TAM-{item.Size.ToUpperInvariant()}",
+                        PriceOverride = item.Price,
+                        IsAvailable = true,
+                        CreatedAt = now,
+                        UpdatedAt = now,
+                        CreatedBy = currentUser.UserId,
+                        UpdatedBy = currentUser.UserId
+                    };
+                    variation.AttributeValues.Add(new VariationAttributeValue
+                    {
+                        VariationId = variation.Id,
+                        ProductId = productId,
+                        AttributeDefinitionId = sizeDefinition.Id,
+                        AttributeValueId = val.Id,
+                        CreatedAt = now
+                    });
+                    db.Add(variation);
+                }
+            }
 
             for (var i = 0; i < uploadedFiles.Count; i++)
             {
@@ -152,7 +239,7 @@ public sealed class ProductsController(AppDbContext db, ICurrentUser currentUser
                 db.Add(photo);
             }
 
-            audit.Add("Product", productId, "ProductCreated", details: new { SimpleRegistration = true, PhotoCount = uploadedFiles.Count });
+            audit.Add("Product", productId, "ProductCreated", details: new { SimpleRegistration = true, PhotoCount = uploadedFiles.Count, SizeCount = cleanSizes.Count });
             await db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
             return CreatedAtAction(nameof(GetProduct), new { id = productId }, new { id = productId });
@@ -167,6 +254,204 @@ public sealed class ProductsController(AppDbContext db, ICurrentUser currentUser
             }
             throw;
         }
+    }
+
+    [Authorize(Roles = Roles.Administrator), HttpPut("admin/products/{productId:guid}/sizes")]
+    public async Task<IActionResult> UpdateProductSizes(Guid productId, ProductSizesUpdateRequest request, CancellationToken ct)
+    {
+        var product = await db.Products
+            .Include(x => x.AttributeDefinitions).ThenInclude(a => a.Values)
+            .Include(x => x.Variations).ThenInclude(v => v.AttributeValues)
+            .SingleOrDefaultAsync(x => x.Id == productId, ct)
+            ?? throw new AppException(404, "Produto não encontrado.");
+
+        var cleanSizes = (request.Sizes ?? [])
+            .Where(x => !string.IsNullOrWhiteSpace(x.Size))
+            .Select(x => new ProductSizeItemRequest(x.Size.Trim(), x.Price))
+            .GroupBy(x => x.Size, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .ToList();
+
+        if (cleanSizes.Any(x => x.Price <= 0))
+            throw new AppException(400, "Todos os tamanhos selecionados devem ter preço maior que zero.");
+
+        if (request.BasePrice.HasValue)
+        {
+            if (request.BasePrice.Value <= 0)
+                throw new AppException(400, "O preço base deve ser maior que zero.");
+            product.BasePrice = request.BasePrice.Value;
+        }
+        else if (cleanSizes.Count > 0)
+        {
+            product.BasePrice = cleanSizes.Min(x => x.Price);
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        product.UpdatedAt = now;
+        product.UpdatedBy = currentUser.UserId;
+
+        if (cleanSizes.Count == 0)
+        {
+            foreach (var attr in product.AttributeDefinitions)
+            {
+                attr.IsRequired = false;
+                attr.UpdatedAt = now;
+                foreach (var val in attr.Values)
+                {
+                    val.IsActive = false;
+                    val.UpdatedAt = now;
+                }
+            }
+
+            foreach (var v in product.Variations)
+            {
+                v.IsAvailable = false;
+                v.UpdatedAt = now;
+            }
+
+            var defaultVar = product.Variations.FirstOrDefault(v => v.AttributeValues.Count == 0);
+            if (defaultVar is null)
+            {
+                db.ProductVariations.Add(CreateDefaultVariation(productId, now));
+            }
+            else
+            {
+                defaultVar.DisplayName = "Padrão";
+                defaultVar.PriceOverride = null;
+                defaultVar.IsAvailable = true;
+                defaultVar.UpdatedAt = now;
+                defaultVar.UpdatedBy = currentUser.UserId;
+            }
+        }
+        else
+        {
+            var sizeAttr = product.AttributeDefinitions.FirstOrDefault(a =>
+                               string.Equals(a.Code, "tamanho", StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(a.Name, "Tamanho", StringComparison.OrdinalIgnoreCase))
+                           ?? product.AttributeDefinitions.OrderBy(a => a.SortOrder).FirstOrDefault();
+
+            if (sizeAttr is null)
+            {
+                sizeAttr = new ProductAttributeDefinition
+                {
+                    Id = Guid.NewGuid(),
+                    ProductId = productId,
+                    Name = "Tamanho",
+                    Code = "tamanho",
+                    SortOrder = 0,
+                    IsRequired = true,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                };
+                product.AttributeDefinitions.Add(sizeAttr);
+                db.ProductAttributeDefinitions.Add(sizeAttr);
+            }
+            else
+            {
+                sizeAttr.Name = "Tamanho";
+                sizeAttr.Code = "tamanho";
+                sizeAttr.IsRequired = true;
+                sizeAttr.UpdatedAt = now;
+            }
+
+            foreach (var otherAttr in product.AttributeDefinitions.Where(a => a.Id != sizeAttr.Id))
+            {
+                otherAttr.IsRequired = false;
+                otherAttr.UpdatedAt = now;
+                foreach (var v in otherAttr.Values)
+                {
+                    v.IsActive = false;
+                    v.UpdatedAt = now;
+                }
+            }
+
+            foreach (var v in sizeAttr.Values)
+            {
+                v.IsActive = false;
+                v.UpdatedAt = now;
+            }
+
+            foreach (var variation in product.Variations)
+            {
+                variation.IsAvailable = false;
+                variation.UpdatedAt = now;
+            }
+
+            for (var i = 0; i < cleanSizes.Count; i++)
+            {
+                var item = cleanSizes[i];
+                var attrVal = sizeAttr.Values.FirstOrDefault(v =>
+                    string.Equals(v.Value.Trim(), item.Size, StringComparison.OrdinalIgnoreCase));
+
+                if (attrVal is null)
+                {
+                    attrVal = new ProductAttributeValue
+                    {
+                        Id = Guid.NewGuid(),
+                        AttributeDefinitionId = sizeAttr.Id,
+                        Value = item.Size,
+                        SortOrder = i,
+                        IsActive = true,
+                        CreatedAt = now,
+                        UpdatedAt = now
+                    };
+                    sizeAttr.Values.Add(attrVal);
+                    db.ProductAttributeValues.Add(attrVal);
+                }
+                else
+                {
+                    attrVal.Value = item.Size;
+                    attrVal.SortOrder = i;
+                    attrVal.IsActive = true;
+                    attrVal.UpdatedAt = now;
+                }
+
+                var variation = product.Variations.FirstOrDefault(v =>
+                    v.AttributeValues.Any(av => av.AttributeValueId == attrVal.Id));
+
+                if (variation is null)
+                {
+                    variation = new ProductVariation
+                    {
+                        Id = Guid.NewGuid(),
+                        ProductId = productId,
+                        DisplayName = $"Tamanho {item.Size}",
+                        Sku = $"TAM-{item.Size.ToUpperInvariant()}",
+                        PriceOverride = item.Price,
+                        IsAvailable = true,
+                        CreatedAt = now,
+                        UpdatedAt = now,
+                        CreatedBy = currentUser.UserId,
+                        UpdatedBy = currentUser.UserId
+                    };
+                    var link = new VariationAttributeValue
+                    {
+                        VariationId = variation.Id,
+                        ProductId = productId,
+                        AttributeDefinitionId = sizeAttr.Id,
+                        AttributeValueId = attrVal.Id,
+                        CreatedAt = now
+                    };
+                    variation.AttributeValues.Add(link);
+                    db.ProductVariations.Add(variation);
+                }
+                else
+                {
+                    variation.DisplayName = $"Tamanho {item.Size}";
+                    variation.Sku = string.IsNullOrWhiteSpace(variation.Sku)
+                        ? $"TAM-{item.Size.ToUpperInvariant()}"
+                        : variation.Sku;
+                    variation.PriceOverride = item.Price;
+                    variation.IsAvailable = true;
+                    variation.UpdatedAt = now;
+                    variation.UpdatedBy = currentUser.UserId;
+                }
+            }
+        }
+
+        audit.Add("Product", productId, "ProductSizesUpdated", details: new { SizeCount = cleanSizes.Count });
+        await db.SaveChangesAsync(ct);
+        return NoContent();
     }
 
     [Authorize(Roles = Roles.Administrator), HttpDelete("admin/products/{id:guid}")]
@@ -269,7 +554,7 @@ public sealed class ProductsController(AppDbContext db, ICurrentUser currentUser
                 x => x.ProductId == productId && x.MinimumQuantity == request.MinimumQuantity, ct))
             throw new AppException(409, "Já existe um desconto para essa quantidade mínima.");
 
-        var minimumPrice = product.Variations.Where(x => x.PriceOverride.HasValue)
+        var minimumPrice = product.Variations.Where(x => x.IsAvailable && x.PriceOverride.HasValue)
             .Select(x => x.PriceOverride!.Value).Append(product.BasePrice).Min();
         if (request.DiscountPerUnit >= minimumPrice)
             throw new AppException(400, "O desconto por unidade precisa ser menor que o menor preço do produto.");
