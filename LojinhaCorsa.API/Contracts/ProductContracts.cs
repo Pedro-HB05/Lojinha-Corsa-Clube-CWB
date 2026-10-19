@@ -3,7 +3,7 @@ using System.ComponentModel.DataAnnotations;
 namespace LojinhaCorsa.API.Contracts;
 
 public sealed record CategoryRequest([Required, MaxLength(120)] string Name,
-    [Required, MaxLength(140)] string Slug, string? Description, bool IsActive = true);
+    [MaxLength(140)] string? Slug = null, string? Description = null, bool IsActive = true);
 
 public sealed record ProductRequest(Guid? CategoryId, [Required, MaxLength(180)] string Name,
     [Required, MaxLength(200)] string Slug, string? Description,
@@ -11,6 +11,8 @@ public sealed record ProductRequest(Guid? CategoryId, [Required, MaxLength(180)]
 
 public sealed class SimpleProductRequest
 {
+    public Guid? CategoryId { get; init; }
+
     [Required, MaxLength(180)]
     public string Name { get; init; } = "";
 
@@ -20,6 +22,8 @@ public sealed class SimpleProductRequest
     public decimal Price { get; init; }
 
     public string? SizesJson { get; init; }
+
+    public string? ColorsJson { get; init; }
 
     public IFormFile? Photo { get; init; }
 
@@ -32,7 +36,8 @@ public sealed record ProductSizeItemRequest(
 
 public sealed record ProductSizesUpdateRequest(
     decimal? BasePrice,
-    IReadOnlyList<ProductSizeItemRequest> Sizes);
+    IReadOnlyList<ProductSizeItemRequest> Sizes,
+    IReadOnlyList<string>? Colors = null);
 
 public sealed record AttributeDefinitionRequest([Required, MaxLength(80)] string Name,
     [Required, MaxLength(80)] string Code, int SortOrder = 0, bool IsRequired = true,
